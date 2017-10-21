@@ -41,3 +41,139 @@ Node.js 把这些概念带到一个全新的境界。 在 npm 的帮助下， No
 更小更集中的模块让每个人都可以分享或重用甚至是一小块代码； 这把不重复自己的准则推向了新高度。
 
 ### 小比表面积
+
+为了精简， Node.js 模块通常会暴露出最小功能。 这会提高 API 的可用性也就是说 API 会更清晰。 大多数情况下模块使用者也不需要扩展模块。
+
+在 Node.js 中只暴露出一个入口功能然后把次级功能设定为属性的设计模式很常见。 这将使功能更加清晰简单。
+
+Node.js 中的模块大多用来直接使用而非扩展， 也许不够灵活但这简化了功能实现， 加快了维护， 也增加了利用率。
+
+### 简化与实用性
+
+你听过 KISS 法则吗：
+> “Simplicity is the ultimate sophistication.” – Leonardo da Vinci
+
+设计简单拒绝大而全的软件是一项最佳实践。 这将有利于快速实现功能容易适配易于理解维护， 这也会推进社区的参与并使软件完善本身。
+
+在 Node.js 中， 这条法则同样适合 JavaScript。 实际上简单的函数， 闭包， 对象遍历代替了类继承。 纯类继承设计常常试图以高精度的计算来复制真实世界而忽略了真实世界内的缺陷和复杂度。事实上我们可能实现这些理解内的复杂度但不是尝试去完全实现完美的软件。
+
+## Node.js 6 和 ES2015
+
+本书将尽量使用新特性， 下面将简单介绍 ES2015 的新特性。
+
+### let 和 const 关键字
+
+基于历史原因 JavaScript 只支持函数作用域和全局作用域来控制变量的生命期和可见性。 就拿 if 语句来说吧， if 内的变量可以在全局内访问到：
+
+````JavaScript
+  if (false) {
+      var x = "hello";
+   }
+   console.log(x);
+   //undefined
+````
+在 ES2015 内引入了 let 关键字实现了块作用域：
+
+````JavaScript
+  if (false) {
+      let x = "hello";
+   }
+   console.log(x);
+   //ReferenceError: x is not defined
+````
+
+更有意义的例子就是用于循环了：
+
+````JavaScript
+for (let i=0; i < 10; i++) {
+     // do something here
+   }
+   console.log(i);
+````
+
+这样我们的代码会更安全， 更易找到错误并避免副作用。
+
+ES2015 引入了 const 关键字。 这个关键字允许我们申明一个常量：
+
+````JavaScript
+const x = 'This will never change';
+      x = '...';
+// TypeError: Assignment to constant variable
+````
+
+常量不可改变。 但是搞清楚 const 并不和其他语言内的常量的含义一致。 实际上对于 const 来说， 赋的值不是常量而绑定值是常量：
+
+````JavaScript
+const x = {};
+x.name = 'John';
+````
+即 x 是个对象这是不变的， 但对象里的值可变
+
+````JavaScript
+x = null; // This will fail
+````
+
+const 在保护一些纯量值是很有用。
+
+一项 const 的最佳实践就是引用模块的时候。
+
+````JavaScript
+const path = require('path');
+// .. do stuff with the path module
+let path = './some/path'; // this will fail
+````
+
+### 箭头函数
+
+一项最棒的特性当属箭头函数。 箭头函数更加简洁并在处理回掉时更好用：
+
+````JavaScript
+const numbers = [2, 6, 7, 8, 1];
+const even = numbers.filter(function(x) {
+   return x%2 === 0;
+});
+
+const numbers = [2, 6, 7, 8, 1];
+const even = numbers.filter(x => x%2 === 0);
+
+const numbers = [2, 6, 7, 8, 1];
+const even = numbers.filter(x => {
+ if (x%2 === 0) {
+   console.log(x + ' is even!');
+   return true;
+} });
+````
+
+如果返回值多余一行箭头函数只自动返回第一行而且需要加上大括号， 参数为空也需要在参数处加小括号。
+
+箭头函数还有一点是绑定了父级块的作用域：
+
+````JavaScript
+function DelayedGreeter(name) {
+    this.name = name;
+}
+DelayedGreeter.prototype.greet = function() {
+ setTimeout( function cb() {
+   console.log('Hello ' + this.name);
+  }, 500);
+};
+
+const greeter = new DelayedGreeter('World');
+greeter.greet(); // will print "Hello undefined"
+
+
+
+DelayedGreeter.prototype.greet = function() {
+ setTimeout( (function cb() {
+   console.log('Hello' + this.name);
+ }).bind(this), 500);
+};
+
+DelayedGreeter.prototype.greet = function() {
+ setTimeout( () => console.log('Hello' + this.name), 500);
+};
+````
+
+这是因为 setTimeout 内的回掉作用域和 greet 的作用域不一致， 以前我们必须使用 bind 重新绑定作用域， 现在只需要使用箭头函数即可。
+
+### 类语法
