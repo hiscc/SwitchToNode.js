@@ -177,3 +177,296 @@ DelayedGreeter.prototype.greet = function() {
 这是因为 setTimeout 内的回掉作用域和 greet 的作用域不一致， 以前我们必须使用 bind 重新绑定作用域， 现在只需要使用箭头函数即可。
 
 ### 类语法
+
+ES2015 引入了一种新的原型继承语法， 这种语法并没有改变对象在 JavaScript 运行时的行为。 属性的继承还是通过原型而非类来继承。 这种语法糖用起来很顺手， 可读性也高所以我们来看看。
+
+````JavaScript
+function Person(name, surname, age) {
+     this.name = name;
+     this.surname = surname;
+     this.age = age;
+}
+Person.prototype.getFullName = function() {
+ return this.name + '' + this.surname;
+};
+Person.older = function(person1, person2) {
+ return (person1.age >= person2.age) ? person1 : person2;
+};
+
+
+class Person {
+   constructor (name, surname, age) {
+     this.name = name;
+     this.surname = surname;
+     this.age = age;
+}
+   getFullName () {
+     return this.name + ' ' + this.surname;
+}
+   static older (person1, person2) {
+     return (person1.age >= person2.age) ? person1 : person2;
+} }
+````
+
+constructor 作为类中构建函数声明的关键字， static 是静态方法的关键字。
+
+类的引入带来了很棒的一项特性， 我们可以 extend 或 super 来扩展类：
+
+````JavaScript
+class PersonWithMiddlename extends Person {
+   constructor (name, middlename, surname, age) {
+     super(name, surname, age);
+     this.middlename = middlename;
+   }
+   getFullName () {
+     return this.name + '' + this.middlename + '' + this.surname;
+   }
+}
+````
+
+这和原型继承类似我们使用 extends 扩展 Person 类， 用 super 来重新定义构建函数， 最后重写 getFullName 方法。
+
+### 增强对象字面量
+
+与此同时 ES2015 引入了新的增强对象字面量的语法。 这个语法提供了一种给对象成员赋值变量和函数的缩写语法， 允许我们在对象创建的时候定义一个计算好的成员名， 同时也提供了 setter 和 getter。
+
+````JavaScript
+const x = 22;
+const y = 17;
+const obj = { x, y };
+
+module.exports = {
+   square (x) {
+     return x * x;
+   },
+   cube (x) {
+     return x * x * x;
+} };
+
+const namespace = '-webkit-';
+const style = {
+ [namespace + 'box-sizing'] : 'border-box',
+ [namespace + 'box-shadow'] : '10px10px5px #888888'
+};
+````
+
+这种语法不需要 function 关键字。
+
+````JavaScript
+const person = {
+ name : 'George',
+ surname : 'Boole',
+ get fullname () {
+   return this.name + '' + this.surname;
+},
+ set fullname (fullname) {
+   let parts = fullname.split('');
+   this.name = parts[0];
+   this.surname = parts[1];
+} };
+console.log(person.fullname); // "George Boole"
+console.log(person.fullname = 'Alan Turing'); // "Alan Turing"
+console.log(person.name); // "Alan"
+````
+
+值得注意的是， console.log(person.name); 会返回 "Alan" ， 因为 get 得到的值都会从 set 里面取得。
+
+### Map 和 Set 集合
+ES2015 引入了 Map 原型， 它被设计来实现更安全、 更灵活、 更直观的 hash 映射：
+
+````JavaScript
+const profiles = new Map();
+profiles.set('twitter', '@adalovelace');
+profiles.set('facebook', 'adalovelace');
+profiles.set('googleplus', 'ada');
+profiles.size; // 3
+profiles.has('twitter'); // true
+profiles.get('twitter'); // "@adalovelace"
+profiles.has('youtube'); // false
+profiles.delete('facebook');
+profiles.has('facebook'); // false
+profiles.get('facebook'); // undefined
+for (const entry of profiles) {
+ console.log(entry);
+}
+````
+我们可以用 for...of 来遍历所有项目， 这一项都是以键作为第一参数值为第二参数的数组。
+
+map 最有趣的是可以使用函数作为键。 在以前的原生对象内你不能以函数作为键因为这里的函数将会被以字符串来处理：
+
+````JavaScript
+const tests = new Map();
+ tests.set(() => 2+2, 4);
+ tests.set(() => 2*2, 4);
+ tests.set(() => 2/2, 1);
+ for (const entry of tests) {
+   console.log((entry[0]() === entry[1]) ? 'PASS' : 'FAIL');
+}
+````
+值得注意的是当我们遍历 map 时， 所有的键的顺序是按照被插入的顺序来定的， 而这在对象里面是随机的。
+
+与此同时， ES2015 引入了 Set 属性。 这个属性允许我们简单地构建 sets ：
+
+````JavaScript
+const s = new Set([0, 1, 2, 3]);
+s.add(3); // will not be added
+s.size; // 4
+s.delete(0);
+s.has(0); // false
+for (const entry of s) {
+ console.log(entry);
+}
+````
+
+如你所见和 map 有点像就是 set 方法变成了 add 方法。 在 set 内还可以包含函数和对象。
+
+
+### WeakMap 和 WeakSet 集合
+
+ES2015 定义了 weak 版本的 Map 和 Set。
+
+WeakMap 只允许对象作为键而且还不能遍历所有项目：
+
+````JavaScript
+let obj = {};
+const map = new WeakMap();
+map.set(obj, {key: "some_value"});
+console.log(map.get(obj)); // {key: "some_value"}
+obj = undefined; // now obj and the associated data in the map
+// will be cleaned up in the next gc cycle
+
+let obj1= {key: "val1"};
+let obj2= {key: "val2"};
+const set= new WeakSet([obj1, obj2]);
+console.log(set.has(obj1)); // true
+obj1= undefined; // now obj1 will be removed from the set
+console.log(set.has(obj1)); // false
+````
+
+这样我们这一在键内保存元数据， 当我们为 obj 赋值后元数据被移除。类似于 WeakMap， WeakSet 也是只能保存对象而且不能被遍历。
+
+
+### 模版字符串
+ES2015 提供了一种对字符串的语法支持即模版字符串  `${expression}` 。
+
+````JavaScript
+const name = "Leonardo";
+const interests = ["arts", "architecture", "science", "music",
+                  "mathematics"];
+const birth = { year : 1452, place : 'Florence' };
+const text = `${name} was an Italian polymath
+interested in many topics such as
+${interests.join(', ')}.He was born
+in ${birth.year} in ${birth.place}.`;
+console.log(text);
+````
+
+## 反应器模式
+本节我们将介绍 Node.js 异步的核心 -- 反应器模式， 并通过单线程架构、 非阻塞 I/O 来理解整个 Node.js 平台。
+
+### I/O 很慢
+在内存上的操作很快， 比硬盘操作快六个数量级。
+
+### 阻塞型 I/O
+传统的阻塞型 I/O 编程内， 函数的调用将一直阻塞进程直到操作结束。
+
+使用阻塞型 I/O 的 web 服务将不能在同一进程内处理多重链接。    
+
+### 非阻塞型 I/O
+
+在这种操作模式下， 系统调用将立即响应而不等待数据读写。 如果在调用中没有响应， 函数将简单返回预定义的常量。
+
+大多数基本模式处理这种非阻塞型 I/O 是通过轮询来判断的直到返回数据； 这叫做忙时等待。
+
+````JavaScript
+resources = [socketA, socketB, pipeA];
+ while(!resources.isEmpty()) {
+   for(i = 0; i < resources.length; i++) {
+     resource = resources[i];
+     //try to read
+     let data = resource.read();
+     if(data === NO_DATA_AVAILABLE)
+       //there is no data to read at the moment
+       continue;
+     if(data === RESOURCE_CLOSED)
+       //the resource was closed, remove it from the list
+       resources.remove(i);
+     else
+       //some data was received, process it
+      consumeData(data);
+    }
+}
+````
+这种简单的技术已经可以在同一进程内处理不同的响应了， 但是并不高效。 轮询将会消耗大量的 CPU 资源。
+
+### 事件多路分用
+忙时等待不是处理非阻塞资源的理想技术。 大多数现代系统都提供了一种原生的机制来处理一致性； 同步事件分用器或事件提醒接口。 被监视的组件和 I/O 事件队列会被阻塞直到可以运行新的事件：
+
+````JavaScript
+socketA, pipeB;
+watchedList.add(socketA, FOR_READ);//[1]
+watchedList.add(pipeB, FOR_READ);
+while(events = demultiplexer.watch(watchedList)) { //[2]
+//event loop
+foreach(event in events) { //[3]
+       //This read will never block and will always return data
+       data = event.resource.read();
+       if(data === RESOURCE_CLOSED)
+         //the resource was closed, remove it from the watched list
+         demultiplexer.unwatch(event.resource);
+       else
+         //some actual data was received, process it
+         consumeData(data);
+     }
+}
+````
+
+1. 资源被添加到数据结构中， 通过 read 操作关联。
+1. 当资源被监视时设置事件提示， 这个调用是同步且阻塞的直到资源被读取。 然后事件多路分发将返回调用和一系列可以处理的事件。
+1. 每一个事件都通过事件多路分用处理后返回。 这时， 事件相关联的资源便可保证被读取且不堵塞。 处理事件的时候， 流将被事件多路分用再次堵塞直到有新的事件可被处理。 这就是轮询。
+
+这样我们就可以在单线程下执行多个 I/O 操作了：
+
+![](images/1.1.png)
+
+### 反应器模式
+
+现在我们可以介绍反应器模式了。 在理想情况下 Node.js 中的 I/O 操作将关联一个回掉函数， 这个回掉函数在事件产生和轮询处理时调用：
+
+![](images/1.2.png)
+
+1. 当发送新的请求给事件分发多用器时产生一个新的 I/O 操作。 方程式将在操作完成后调用。 给事件分发多用器提交新的请求时非阻塞的， 方程式会迅速取得控制权。
+1. 当一套操作完成后事件分发多用器将把新的事件加到事件队列里面。
+1. 这时事件轮询将遍历所有的事件队列。
+1. 每个事件的处理函数都会调用。
+1. 当事件处理完成时将会把权限交还给事件轮询。 但是在处理程序执行时新的异步请求可能会在权限交还给事件轮询之前被插入到事件分发多用器里。
+1. 当所有在事件队列里的事件被处理后， 在事件分发多用器上的轮询将阻塞， 轮询将在新事件出现的时候被触发。
+
+现在异步行为很清楚了： 方程式将在某一时刻访问资源并提供处理程序， 而这个处理程序将在操作完成的另一个时刻被调用。
+
+反应器模式将通过阻塞来处理 I/O 操作， 直到被监视资源里出现新的事件， 然后通过每个事件相关联的处理程序来产生回馈。
+
+### Node.js-libuv 的非阻塞 I/O 引擎
+
+每个操作系统都有其自己的事件分发多用器接口： epoll on Linux, kqueue on Mac OS X, and the I/O Completion Port (IOCP) API on Windows 。 除此之外， 每一个 I/O 操作也依据资源的不同而变化甚至是在相同的操作系统内。 所以 Node.js 核心团队创建了一个叫libuv的 C 语言库， 目的就是在所有平台及资源上统一行为； 现在它相当于是 Node.js 的底层 I/O 引擎。
+
+除了在系统处理层面上的抽象， libuv 也完成了反应器模式， 因此也提供了创建事件轮询、 处理事件队列、 运行异步 I/O 操作及其它任务队列的 API 。
+
+### Node.js 窍门
+
+反应器模式和 libuv 是 Node.js 的基础， 但我们还需要下面三个组件来构建全平台：
+* 一系列封装来暴露 libuv 和 底层功能给 JavaScript。
+* V8， Google 原先为 Chrome 开发的 JavaScript 引擎。 这也是 Node.js 如此快而高效的原因。 V8 也因其革命性的设计和高效的内存管理而备受称赞。
+* 一个 JavaScript 核心库来实现 Node.js API 的高级抽象。
+
+![images/1.3.png]
+
+### 总结
+
+在本章我们知道了 Node.js 平台上的一些重要基础的原则。 平台背后的设计哲学及选择， 事实上这将影响到我们每一个创建的方程式。 通常来说来自其它平台的开发者需要转换一些观念才能熟悉这些。
+
+另一方面， 反应器模式天生的异步特性需要不同的编程风格。 模块模式和这些级简准则在重用性、 维护性、 可用性上会产生奇效。
+
+最后， 除了在 JavaScript 快及高效之上， Node.js 也因这些准则变得更加有趣。
+
+在下一章我们将探究 Node.js 的异步模式： 回掉模式和事件分发。 我们将理解同步和异步的区别并写出清晰的功能。
