@@ -459,7 +459,7 @@ foreach(event in events) { //[3]
 * V8， Google 原先为 Chrome 开发的 JavaScript 引擎。 这也是 Node.js 如此快而高效的原因。 V8 也因其革命性的设计和高效的内存管理而备受称赞。
 * 一个 JavaScript 核心库来实现 Node.js API 的高级抽象。
 
-![images/1.3.png]
+![](images/1.3.png)
 
 ### 总结
 
