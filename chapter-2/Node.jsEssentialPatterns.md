@@ -149,4 +149,118 @@ const reader1 = createFileReader('data.txt');
 
 如你所见第二个回掉将永不执行：
 * 在创建 reader1 时， 我们的 inconsistentRead() 是异步的， 因为因为这里没有缓存结果可用。 因此， 我们一直在注册我们的监听器
-* 然后， reader2 在事件轮询的循环内创建。 内部的 inconsistentRead() 将使同步的。 所以这个回掉将立刻被调用， 这也就是说所有
+* 然后， reader2 在事件轮询的循环内创建。 内部的 inconsistentRead() 将使同步的。 所以这个回掉将立刻被调用， 这也就是说所有对 reader2 的监听都是同步调用的。 但是， 我们在创建 reader2 后注册监听器， 所以这些监听器将不会被调用。
+
+### 使用同步 APIs
+
+对上节例子中 inconsistentRead() 函数进行完全同步化便可以修复会出现的问题。 这是因为 Node.js 为基础 I/O 提供了一系列同步风格的 APIs。 例如  fs.readFileSync() ：
+
+````JavaScript
+const fs = require('fs');
+ const cache = {};
+ function consistentReadSync(filename) {
+   if(cache[filename]) {
+     return cache[filename];
+   } else {
+     cache[filename] = fs.readFileSync(filename, 'utf8');
+     return cache[filename];
+   }
+}
+````
+
+记住把 API 从 CPS 风格转换到直接风格， 或者说是从异步风格转换到同步风格需要转换所有代码的使用风格。 在本例中我们就完全修改了 createFileReader() 的接口。
+
+当然使用同步 API 有以下注意要点：
+
+* 不是对应每个异步 API 都有其同步 API
+* 同步 API 将阻塞事件轮询。 它将减慢方程式运行速度
+
+在我们的 consistentReadSync() 函数中， 阻塞事件轮询带来的后果很轻因为同步的 I/O API 调用只在每个个文件名处启动， 缓存好的值将用于后面的调用。 如果我们限制了静态文件的数量然后再使用 consistentReadSync() 将不会对事件轮询产生大的影响。 当然如果我们一次读取很多的文件那就是另一回事了。 使用同步 I/O 操作在 Node.js 中的大多数情况下都不鼓励； 但是在一些情况下同步操作可能会有奇效。 在启动方程式的时候使用同步阻塞 API 来载入配置文件还是很有意义的。
+
+当它们不影响服务器处理其它同时请求的情况下再使用阻塞 API。
+
+### 延时执行
+
+另一个来修复我们在上面出现的问题的可选方案是使用纯异步。 这里会使用一种延时执行的方案而非在事件轮询内立即启动。 在 Node.js 中， 我们可以使用 process.nextTick() 来延时执行直到下一轮的事件轮询。 它的功能非常简单； 它使用了回掉作为一个参数并把它放到事件队列的顶层， 即很多未开始的 I/O 事件并迅速返回。 回掉将在事件轮询再次开始时被调用。
+
+我们这就来试试：
+
+````JavaScript
+const fs = require('fs');
+   const cache = {};
+   function consistentReadAsync(filename, callback) {
+     if(cache[filename]) {
+       process.nextTick(() => callback(cache[filename]));
+     } else {
+       //asynchronous function
+       fs.readFile(filename, 'utf8', (err, data) => {
+         cache[filename] = data;
+         callback(data);
+       });
+     }
+}
+````
+
+现在， 我们的函数保证会是异步的。
+
+另一个用来延时执行的 API 是 setImmediate()。 它们的目标非常相似， 但是语义不一样。 process.nextTick() 回掉在所有其它 I/O 事件启动时。 而 setImmediate() 回掉是在已经准备好的 I/O 事件队列之后启动的。
+
+## Node.js 回掉环境
+
+在 Node.js 中， 连续传入风格 APIs 和回掉遵循一套一系列公约。 这些约定应用给 Node.js 核心 API 但是也遵循大量的用户模块。所以我们很有必要了解这些公约。
+
+### 回掉在最后
+
+在所有的 Node.js 核心方法中， 标准的公约是当函数接受回掉时在最后一个参数处放置回掉：
+
+````JavaScript
+fs.readFile(filename, [options], callback)
+````
+
+回掉一般放置在最后一个参数的位置， 这样可读性更高。
+
+### 错误在最前面
+
+在 CPS 中， 错误被作为任何一种结果来传送。 在 Node.js 中， 任何被  CPS 传入的错误都放置在第一个参数的位置， 任何实际的结果都放置在第二个参数处。 如果操作结果没有错误产生， 第一个参数将使 null 或 undefined：
+
+````JavaScript
+fs.readFile('foo.txt', 'utf8', (err, data) => {
+   if(err)
+     handleError(err);
+   else
+     processData(data);
+});
+````
+
+这是种最佳实践而且易于调试。 另一个需要注意的点就是错误一直是 Error 类型。 这意味着简单的字符串或者数字将不应当作错误对象。
+
+### 传递错误
+
+同步传递错误， throw 语句被认为是直接的风格， 这将会导至直到错误被捕获时才弹出调用栈。
+
+在异步 CPS 中， 简单的传入错误给下个回掉链很合适：
+
+````JavaScript
+const fs = require('fs');
+function readJSON(filename, callback) {
+ fs.readFile(filename, 'utf8', (err, data) => {
+   let parsed;
+   if(err)
+     //propagate the error and exit the current function
+     return callback(err);
+   try {
+     //parse the file contents
+     parsed = JSON.parse(data);
+   } catch(err) {
+     //catch parsing errors
+     return callback(err);
+   }
+   //no errors, propagate just the data
+   callback(null, parsed);
+ });
+};
+````
+
+你应该注意到当我们想传递错误时该怎样传递有效结果。 我们使用 return 来传递错误。 这样出现错误时就不会调用下一行的代码了。
+
+### 未捕获的异常
