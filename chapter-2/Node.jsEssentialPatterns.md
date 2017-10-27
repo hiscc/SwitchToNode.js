@@ -264,3 +264,65 @@ function readJSON(filename, callback) {
 你应该注意到当我们想传递错误时该怎样传递有效结果。 我们使用 return 来传递错误。 这样出现错误时就不会调用下一行的代码了。
 
 ### 未捕获的异常
+
+你可能已经看到 readJSON() 函数被用于避免任何异常出现在 fs.readFile() 回掉中了， 我们使用了 try...catch 块来包围 JSON.parse() 。 在异步函数内抛出异常将导致这个异常跳出事件轮询并不会被传递到下一个回掉内。
+
+在 Node.js 内， 这是一种不可恢复的状态， 方程式将简单地打印处错误给 stderr 接口。 我们将去除 try...catch 块而示范：
+
+````JavaScript
+const fs = require('fs');
+ function readJSONThrows(filename, callback) {
+   fs.readFile(filename, 'utf8', (err, data) => {
+     if(err) {
+       return callback(err);
+     }
+     //no errors, propagate just the data
+     callback(null, JSON.parse(data));
+   });
+};
+````
+
+在我们现在定义的函数内， 就没办法来捕获最终来自 JSON.parse() 的异常了。 如果我们试着解析一个未验证的 JSON 文件：
+
+````JavaScript
+readJSONThrows('nonJSON.txt', err => console.log(err));
+
+// SyntaxError: Unexpected token d
+//            at Object.parse (native)
+//            at [...]
+//            at fs.js:266:14
+//            at Object.oncomplete (fs.js:107:15)
+````
+
+这将导致方程式因为异常突然被终止。
+
+现在我们来追踪一下处理栈， 我们将看到它起始于 fs.js 模块， 确切说是来自读取 fs.readFile() 函数后通过事件轮询返回的结果。 这清晰地告诉我们异常来自我们的回掉然后直接进入事件轮询， 最后被捕获抛出。
+
+这也意味着用 try...catch 块来包围 readJSONThrows() 将不会起作用， 因为在块内的处理栈不同于我们在回掉内的操作：
+
+````JavaScript
+try {
+     readJSONThrows('nonJSON.txt', function(err, result) {
+//... });
+   } catch(err) {
+     console.log('This will not catch the JSON parsing exception');
+}
+````
+
+catch 语句将不会接收到 JSON 解析异常， 因为它将返回异常将抛出的栈。 我们只会看到栈在事件轮询处结束而不会看到触发异步操作。
+
+正如以前说的， 方程式在异常到达事件轮询的时候发生崩溃； 但是我们依然可以做一点补救措施， 当发生崩溃时， Node.js 会分发一个特别事件 uncaughtException：
+
+````JavaScript
+process.on('uncaughtException', (err) => {
+     console.error('This will catch at last the ' +
+       'JSON parsing exception: ' + err.message);
+     // Terminates the application with 1 (error) as exit code:
+     // without the following line, the application would continue
+     process.exit(1);
+});
+````
+
+理解未捕获的异常在离开方程式时的状态不是连续的这点很重要。 例如， 一个未完成的 I/O 请求运行或闭包可能变成不连续的。 这就是为什么经常被建议， 特别是在生产环境内， 在收到未捕获异常后要退出方程式的原因。
+
+## 模块系统和它的模式
