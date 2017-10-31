@@ -347,3 +347,135 @@ console.log(module);
 ````
 
 这种模式采用了自执行函数来创建一个私有作用域并有选择的暴露出一部分给公共空间。 在代码中， module 变量只包含一个 API， 因为剩下的部分都是公共空间访问不到的。 正如我们所见的这种模式也是 Node.js 模块系统的基础。
+
+## 揭秘 Node.js 模块
+
+CommonJS 组织致力于标准化 JavaScript 生态， 它有一个非常流行的提议叫作 CommonJS 模块。 Node.js 在这基础之上建立了自己的模块系统， 我们这就来看看 Node.js 中的模块系统。
+
+### 自制模块加载器
+
+为了解释它是怎么工作的， 我们也来建一个类似的系统：
+
+````JavaScript
+function loadModule(filename, module, require) {
+ const wrappedSrc=`(function(module, exports, require) {
+     ${fs.readFileSync(filename, 'utf8')}
+   })(module, module.exports, require);`;
+ eval(wrappedSrc);
+}
+````
+
+为了揭露出模块模式的原理我们把大多数细节都包含在一个函数内。 不同的是我们为它传入了一系列参数。
+
+现在我们来实现 require() 函数：
+
+````JavaScript
+ const require = (moduleName) => {
+  console.log(`Require invoked for module: ${moduleName}`);
+  const id = require.resolve(moduleName); //[1]
+  if(require.cache[id]) {                 //[2]
+    return require.cache[id].exports;
+  }
+
+  //module metadata
+  const module = {                        //[3]
+    exports: {},
+    id: id
+  };
+  //Update the cache
+  require.cache[id] = module;             //[4]
+  //load the module
+  loadModule(id, module, require);        //[5]
+  //return exported variables
+  return module.exports;                  //[6]
+};
+require.cache = {};
+require.resolve = (moduleName) => {
+     /* resolve a full module id from the moduleName */
+};
+````
+
+这里只是模拟了 require() 函数的基本实现， 我们来一步步解释：
+
+1. 我们通过模块名字引入一个全路径模块
+1. 如果模块已经被导入过， 那么可以在缓存内找到
+1. 如果没有被导入， 我们就创建一个 module 对象来初始化
+1. 缓存 module 对象
+1. 导入模块的源代码并赋值给我们创建的 module.exports 对象
+1. 导出 module.exports 作为模块的公共接口
+
+### 定义一个模块
+
+通过我们自定义的  require() 函数， 我们知道了如何定义一个模块下面是个实例：
+
+````JavaScript
+//load another dependency
+const dependency = require('./anotherModule');
+//a private function
+function log() {
+ console.log(`Well done ${dependency.username}`);
+}
+//the API to be exported for public use
+module.exports.run = () => {
+  log();
+};
+````
+
+除了 module.exports 导出的内容剩下的东西全是私有的。
+
+## 全局定义
+
+尽管在模块内定义的变量和函数都有其本地作用域， 我们依然需要一个全局变量。 事实上模块系统内就有一个特殊的变量用作全局变量即 global， 一切分配给这个变量的值都将自动使用全局作用域。
+
+### module.exports 对 exports
+
+一些新手不理解 module.exports 和 exports 的区别， exports 只是 module.exports 初始值的引用； 像那些在模块导入前的大多数简单对象字面量。
+
+这就意味着我们只能通过 exports 变量来为对象绑定新的属性：
+
+````JavaScript
+exports.hello = () => {
+    console.log('Hello');
+}
+
+exports = () => {
+     console.log('Hello');
+}
+
+module.exports = () => {
+     console.log('Hello');
+}
+````
+
+重新为 exports 赋值是无效的， 因为这不会改变 module.exports 的内容； 这仅仅会为变量本身重新赋值。 如果我们想暴露对象本身我们必须使用 module.exports。
+
+## require 函数是同步的
+
+另一个重要的细节就是 require 函数的同步的， 这就意味着我们的 module.exports 也必须是同步的， 下面的这种写法会出错：
+
+````JavaScript
+setTimeout(() => {
+     module.exports = function() {...};
+}, 100);
+````
+这将限制我们在定义模块时使用同步代码， 所以 Node.js 提供了同步 APIs 供我们使用。
+
+如果我们需要异步方法来初始化一个模块， 我们可以在后面用异步的方法初始化定义并导出一个未初始化的模块。
+
+在早期 Node.js 也提供异步的 require() 函数， 但很快便被移除了因为过分复杂的功能弊大于利。
+
+## 算法揭秘
+
+依赖地狱描述了一种因为软件间互相依赖出现版本不一致的问题。 Node.js 解决了这个问题。 我们这就来看看这个算法是如何实现的。 正如我们看到的 resolve() 函数以模块名作为输入并返回模块的全路径。 这条路径同时也用来辨别模块的唯一性。 这种算法可分为如下三个分支：
+
+* 文件系统： 如果文件名以 ／ 开头， 路径被认为是绝对路径。 如果以 .／ 开头则是相对路径， 相对于请求的模块的路径
+* 核心模块： 如果文件名没有 ／ 或 .／ 开头， 算法将从 Node.js 核心模块内查找模块
+* 包模块： 如果没有在核心模块内找到模块， 剩下的便从第一个 node_modules 目录下查找， 如果还没找到则继续下一个 node_modules 目录下查找
+
+对于文件和包模块， 如果都是相同的文件名， 算法按这样的顺序查找：
+
+<moduleName>.js
+<moduleName>/index.js
+The directory/file specified in the main property of <moduleName>/package.json
+
+http://nodejs.org/api/modules.html#modules_all_together.
