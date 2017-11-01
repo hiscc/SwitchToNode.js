@@ -479,3 +479,66 @@ setTimeout(() => {
 The directory/file specified in the main property of <moduleName>/package.json
 
 http://nodejs.org/api/modules.html#modules_all_together.
+
+基于我们刚刚描述的算法， 每个包仅能安装自己相应需要的依赖， 而没有解决平行结构内包之间的依赖。
+
+myApp
+   ├── foo.js
+   └── node_modules
+       ├── depA
+       │   └── index.js
+       ├── depB
+       │   ├── bar.js
+       │   └── node_modules
+       │   └── depA
+       │           └── index.js
+       └── depC
+           ├── foobar.js
+           └── node_modules
+               └── depA
+                   └── index.js
+
+myApp, depB, 和 depC 全部依赖于 depA； 但是它们都有其自己所依赖的私有版本包！ 依据前面提到的规则 require('depA') 将导入不同的模块：
+
+* /myApp/foo.js 内的 require('depA') 将导入 /myApp/node_modules/depA/index.js
+* /myApp/node_modules/depB/bar.js 内的 require('depA') 将导入 /myApp/node_modules/depB/node_modules/depA/index.js
+* /myApp/node_modules/depC/foobar.js 内的 require('depA') 将导入 /myApp/node_modules/depC/node_modules/depA/index.js
+
+这种算法就是 Node.js 管理依赖关系的核心， 从而保证 Node.js 可有拥有成千上万个包而不会出现版本冲突。
+
+我们使用  require() 来解决包的导入； 但是如果需要的话也可以使用 require.resolve() 来直接导入任何模块。
+
+### 模块缓存
+
+因为 require() 将使用导入模块的缓存版本所以每个模块只导入一次。 我们可以通过删除 require.cache 内相关的键来使缓存失效。
+
+### 循环依赖
+
+许多循环依赖是本身设计的问题， 但也有可能发生， 所以我们应该了解这是怎么出现的。 再回头看看我们自制的 require() 函数：
+
+````JavaScript
+//a.js
+exports.loaded = false;
+const b = require('./b');
+module.exports = {
+  bWasLoaded: b.loaded,
+  loaded: true
+};
+
+//b.js
+exports.loaded = false;
+const a = require('./a');
+module.exports = {
+  aWasLoaded: a.loaded,
+  loaded: true
+};
+
+const a = require('./a');
+const b = require('./b');
+console.log(a);
+console.log(b);
+
+//
+{ bWasLoaded: true, loaded: true }
+{ aWasLoaded: false, loaded: true }
+````
