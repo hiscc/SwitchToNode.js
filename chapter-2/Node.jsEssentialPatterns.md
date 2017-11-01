@@ -542,3 +542,259 @@ console.log(b);
 { bWasLoaded: true, loaded: true }
 { aWasLoaded: false, loaded: true }
 ````
+
+结果就是循环的依赖会出现问题。 当两个模块被导入时， 在 b.js 里导入的 a.js 会不完整。
+
+``
+This result reveals the caveats of circular dependencies. While both the modules are completely initialized the moment they are required from the main module, the a.js module will be incomplete when it is loaded from b.js. In particular, its state will be the one that it reached the moment it required b.js. This behavior should ring another bell, which will be confirmed if we swap the order in which the two modules are required in main.js.
+``
+
+如果我们这样做， 我们将在 a.js 内收到不完整的 b.js。 这很令人困惑。
+
+## 模块定义模式
+
+在模块系统内除了导入依赖的机制还有一个定义接口的工具。 和其它接口设计模式一样， 主要是用于区别私有和公共功能。 权衡的标准是可扩展性和重用性。
+
+在本章， 我们将分析在 Node.js 中最流行的定义模块模式。
+
+### 命名导出
+
+导出一个公开接口最基本的方式是使用命名导出， 即把我们想导出的值赋给 exports （或者 module.exports）：
+
+````JavaScript
+//file logger.js
+exports.info = (message) => {
+ console.log('info: ' + message);
+};
+exports.verbose = (message) => {
+ console.log('verbose: ' + message);
+};
+
+//file main.js
+const logger = require('./logger');
+logger.info('This is an informational message');
+logger.verbose('This is a verbose message');
+````
+
+大多数 Node.js 核心模块都使用这种模式。
+
+CommonJS 只允许使用 exports 来暴露公共成员。 因此，命名导出模式兼容性很强。
+
+### 导出函数
+
+给整个 module.exports 赋值一个函数也是一种非常流行的方式。 主要的优点是只导出一个功能更加清晰明了， 这被社区叫作垂直模式。
+
+````JavaScript
+//file logger.js
+module.exports = (message) => {
+  console.log(`info: ${message}`);
+};
+
+//这种模式还有一项扩展用于命名其它公开接口
+module.exports.verbose = (message) => {
+  console.log(`verbose: ${message}`);
+};
+
+//file main.js
+const logger = require('./logger');
+logger('This is an informational message');
+logger.verbose('This is a verbose message');
+````
+
+虽然只暴露出一个函数看起来很有局限性， 实际上这是一种很完美的实现方式。 模块化的  Node.js 很提倡这种单一职责准则 (SRP)： 每个模块应该对一个功能负责， 这个模块的职责就是这一个功能。
+
+### 暴露构建器
+
+暴露构建器专门用于暴露函数。 不同的是这种模式允许我们使用构建器创建一个新的实例， 但是我们可以扩展原型并伪造新的类：
+
+````JavaScript
+//file logger.js
+function Logger(name) {
+ this.name = name;
+}
+Logger.prototype.log = function(message) {
+ console.log(`[${this.name}] ${message}`);
+};
+Logger.prototype.info = function(message) {
+ this.log(`info: ${message}`);
+};
+Logger.prototype.verbose = function(message) {
+ this.log(`verbose: ${message}`);
+};
+module.exports = Logger;
+
+//file main.js
+const Logger = require('./logger');
+const dbLogger = new Logger('DB');
+dbLogger.info('This is an informational message');
+const accessLogger = new Logger('ACCESS');
+accessLogger.verbose('This is a verbose message');
+
+
+
+class Logger {
+ constructor(name) {
+   this.name = name;
+ }
+ log(message) {
+   console.log(`[${this.name}] ${message}`);
+}
+ info(message) {
+   this.log(`info: ${message}`);
+}
+ verbose(message) {
+   this.log(`verbose: ${message}`);
+} }
+module.exports = Logger;
+
+
+function Logger(name) {
+  if(!(this instanceof Logger)) {
+    return new Logger(name);
+  }
+  this.name = name;
+};
+````
+
+该模式的一个变体是应用一个没有使用 new 创建实例而保护策略。 这个小技巧允许我们将模块作为一个工厂：
+
+````JavaScript
+function Logger(name) {
+ if(!(this instanceof Logger)) {
+   return new Logger(name);
+ }
+ this.name = name;
+};
+
+//file logger.js
+const Logger = require('./logger');
+const dbLogger = Logger('DB');
+accessLogger.verbose('This is a verbose message');
+
+function Logger(name) {
+ if(!new.target) {
+   return new LoggerConstructor(name);
+ }
+ this.name = name;
+}
+````
+
+我们还可以使用 ES2015 带来的 new.target 语法来实现。 new.target 属性使所有函数内的元属性。
+
+### 暴露一个实例
+
+我们可以使用缓存机制来从构建器或一个工厂定义一个有状态的实例， 这将在多模块间分享状态：
+
+````JavaScript
+//file logger.js
+function Logger(name) {
+ this.count = 0;
+ this.name = name;
+}
+Logger.prototype.log = function(message) {
+ this.count++;
+ console.log('[' + this.name + '] ' + message);
+};
+module.exports = new Logger('DEFAULT');
+
+//file main.js
+const logger = require('./logger');
+logger.log('This is an informational message');
+
+
+module.exports.Logger = Logger;
+
+const customLogger = new logger.Logger('CUSTOM');
+customLogger.log('This is an informational message');
+````
+
+因为模块被缓存了， 每个导入 logger 模块的模块将取到对象内相同的实例。 这个模式很像创建了一个单例； 但是他不会传递每个实例间的区别， 就像发生在传统的单例模式中那样。 当我们分析这种算法时， 我们就知道了实际情况， 模块将被安装多次。 在多个相同逻辑模块的实例全部运行在一致的 Node.js 方程式中。
+
+### 修改其它模块或全局作用域
+
+我们应该知道我们可以修改模块或者任何对象内的全局作用域， 还有在缓存内的其它模块。 请注意这普遍被认为是一种糟糕实践， 但在某种情形下依然很有用。 这种行为被称作猴子补丁：
+
+````JavaScript
+//file patcher.js
+// ./logger is another module
+require('./logger').customMessage = () => console.log('This is a new functionality');
+
+//file main.js
+require('./patcher');
+const logger = require('./logger');
+logger.customMessage();
+````
+
+patcher 必须先于 logger 前被引入才其效。
+
+## 观察者模式
+
+含有一个重要的模式就是观察者模式。 有了反应器、 回掉、 模块后， 观察者模式是 Node.js 平台的支柱也是使用许多核心模块的先决条件。
+
+观察者是一种对于  Node.js 天生的反应模型和完美实现回掉的理想解决方案。
+
+观察者定义了一个可以注意到在一系列本身状态改变的观察者的对象（subject）。
+
+和回掉的主要不同点在于对象（subject）可注意到多个观察者， 而传统的回掉只能传递结果给一个监听器。
+
+## 事件触发器类
+
+传统的面向对象编程中， 观察者模式需要接口、 有形类和等级体系； 在 Node.js 中， 这变得更加简单。 因为观察者模式已经被构建到 node 核心中并以 EventEmitter 类暴露。 EventEmitter 允许我们注册一个多多个监听器。
+
+![](images/2.2.png)
+
+触发器是一个原型并且它被事件核心模块所暴露出来：
+
+````JavaScript
+const EventEmitter = require('events').EventEmitter;
+const eeInstance = new EventEmitter();
+````
+
+一些触发器的基础方法：
+* on(event, listener): 这个方法允许我们来为给定的事件注册一个新的监听器
+* once(event, listener): 这个方法注册一个新的监听器且只监听一次
+* emit(event, [arg1], [...]): 这个方法提供新的事件并可传入多个参数
+* removeListener(event, listener): 这个方法移除事件的监听器
+
+因为所有的方法都会返回 EventEmitter 实例所以你可以串联。 监听函数只接受发射器上发射的参数。
+
+我们可以发现很多与回掉不同的地方； 特别是第一个参数不是 error 。
+
+## 创建并使用事件发射器
+
+我们这就来创建使用事件发射器：
+
+````JavaScript
+const EventEmitter = require('events').EventEmitter;
+   const fs = require('fs');
+   function findPattern(files, regex) {
+     const emitter = new EventEmitter();
+     files.forEach(function(file) {
+       fs.readFile(file, 'utf8', (err, content) => {
+         if(err)
+           return emitter.emit('error', err);
+         emitter.emit('fileread', file);
+         let match;
+         if(match = content.match(regex))
+           match.forEach(elem => emitter.emit('found', file, elem));
+       });
+    });
+    return emitter;
+}
+
+findPattern(
+       ['fileA.txt', 'fileB.json'],
+       /hello \w+/g
+     )
+     .on('fileread', file => console.log(file + ' was read'))
+     .on('found', (file, match) => console.log('Matched "' + match +
+       '" in file ' + file))
+     .on('error', err => console.log('Error emitted: ' + err.message));
+````
+
+创建好的发射器产生三个事件：
+* fileread: 文件被读取时发生
+* found: 匹配找到时发生
+*error: 在读取文件发生错误时触发
+
+## 传递错误
