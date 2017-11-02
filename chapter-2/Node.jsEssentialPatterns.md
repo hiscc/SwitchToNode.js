@@ -406,7 +406,7 @@ require.resolve = (moduleName) => {
 
 ### 定义一个模块
 
-通过我们自定义的  require() 函数， 我们知道了如何定义一个模块下面是个实例：
+通过我们自定义的  require() 函数， 我们知道了如何定义一个模块。 下面是个实例：
 
 ````JavaScript
 //load another dependency
@@ -429,7 +429,7 @@ module.exports.run = () => {
 
 ### module.exports 对 exports
 
-一些新手不理解 module.exports 和 exports 的区别， exports 只是 module.exports 初始值的引用； 像那些在模块导入前的大多数简单对象字面量。
+一些新手不理解 module.exports 和 exports 的区别， exports 只是 module.exports 初始值的引用； 就像那些在模块导入前的大多数简单对象字面量。
 
 这就意味着我们只能通过 exports 变量来为对象绑定新的属性：
 
@@ -482,6 +482,7 @@ http://nodejs.org/api/modules.html#modules_all_together.
 
 基于我们刚刚描述的算法， 每个包仅能安装自己相应需要的依赖， 而没有解决平行结构内包之间的依赖。
 
+````
 myApp
    ├── foo.js
    └── node_modules
@@ -497,7 +498,7 @@ myApp
            └── node_modules
                └── depA
                    └── index.js
-
+````
 myApp, depB, 和 depC 全部依赖于 depA； 但是它们都有其自己所依赖的私有版本包！ 依据前面提到的规则 require('depA') 将导入不同的模块：
 
 * /myApp/foo.js 内的 require('depA') 将导入 /myApp/node_modules/depA/index.js
@@ -543,11 +544,7 @@ console.log(b);
 { aWasLoaded: false, loaded: true }
 ````
 
-结果就是循环的依赖会出现问题。 当两个模块被导入时， 在 b.js 里导入的 a.js 会不完整。
-
-``
-This result reveals the caveats of circular dependencies. While both the modules are completely initialized the moment they are required from the main module, the a.js module will be incomplete when it is loaded from b.js. In particular, its state will be the one that it reached the moment it required b.js. This behavior should ring another bell, which will be confirmed if we swap the order in which the two modules are required in main.js.
-``
+结果就是循环的依赖会出现问题。 当两个模块被导入初始化时， 在 b.js 里导入的 a.js 会不完整。 特别是它的状态将会是从 b.js 导入时的状态。 当我们在主模块内交换两个模块的顺序时情况会相反。
 
 如果我们这样做， 我们将在 a.js 内收到不完整的 b.js。 这很令人困惑。
 
@@ -739,7 +736,7 @@ patcher 必须先于 logger 前被引入才其效。
 
 ## 事件触发器类
 
-传统的面向对象编程中， 观察者模式需要接口、 有形类和等级体系； 在 Node.js 中， 这变得更加简单。 因为观察者模式已经被构建到 node 核心中并以 EventEmitter 类暴露。 EventEmitter 允许我们注册一个多多个监听器。
+传统的面向对象编程中， 观察者模式需要接口、 有形类和等级体系； 在 Node.js 中， 这变得更加简单。 因为观察者模式已经被构建到 node 核心中并以 EventEmitter 类暴露。 EventEmitter 允许我们注册一个或多个监听器。
 
 ![](images/2.2.png)
 
@@ -798,3 +795,127 @@ findPattern(
 *error: 在读取文件发生错误时触发
 
 ## 传递错误
+
+EventEmitter 在回掉内出现时不会在错误发生时抛出一个异常， 因为如果事件是被异步触发的那么它将在事件轮询内丢失。 作为替代， 公约里分发了一个特别的事件 error 参数作为传入给一个 Error 对象。 这就是我们在 findPattern() 函数内做的。
+
+每次都注册一个监听 error 事件的监听器是一项最佳实践， 因为 Node.js 将以一种特别的方式来处理它然后再抛出一个异常并在没有发现相关监听器时退出程序。
+
+## 观察一切对象
+
+有时， 直接从 EventEmitter 类创建一个新的对象还不够， 因为这对于产品的功能来说还不够。 所以我们必须使普通对象可观察； 通过扩展 EventEmitter 类：
+
+````JavaScript
+const EventEmitter = require('events').EventEmitter;
+   const fs = require('fs');
+   class FindPattern extends EventEmitter {
+     constructor (regex) {
+       super();
+       this.regex = regex;
+       this.files = [];
+     }
+     addFile (file) {
+       this.files.push(file);
+       return this;
+     }
+     find () {
+       this.files.forEach( file => {
+         fs.readFile(file, 'utf8', (err, content) => {
+           if (err) {
+             return this.emit('error', err);
+           }
+           this.emit('fileread', file);
+           let match = null;
+           if (match = content.match(this.regex)) {
+             match.forEach(elem => this.emit('found', file, elem));
+           }
+         });
+       });
+       return this;
+     }
+   }
+
+const findPatternObject = new FindPattern(/hello \w+/);
+   findPatternObject
+     .addFile('fileA.txt')
+     .addFile('fileB.json')
+     .find()
+     .on('found', (file, match) => console.log(`Matched "${match}"
+       in file ${file}`))
+     .on('error', err => console.log(`Error emitted ${err.message}`));
+````
+
+我们从 EventEmitter 扩展来的 FindPattern 原型使用 util 模块提供的 inherits() 函数。
+
+我们看到 FindPattern 对象拥有了所有方法， 而且还通过继承 EventEmitter 而被观察。
+
+这是种在 Node.js 生态中很常见的模式， 例如 Server 对象是 HTTP 核心定义的模块也继承自 EventEmitter 并拥有 listen(), close(), setTimeout() 等方法， 因而允许它产生事件例如在收到 request 时产生 request 事件； 或者在创建新的 connection 时产生 connection 事件； 或者在服务关闭时产生 close 事件。
+
+另一个扩展自 EventEmitter 类的著名例子就是 Node.js 流。
+
+## 同步和异步事件
+
+有了回掉事件便可以分同步或异步触发了。 在 EventEmitter 中不要混合这两种实现至关重要。 当事件被异步分发时， 程序将在以后注册一个新的监听器甚至是在 EventEmitter 被初始化后， 因为事件直到下一轮事件轮询才被触发。 那就是在 findPattern() 函数内发生的。
+
+相反的， 同步分发事件需要在 EventEmitter 函数开始前注册所有监听器才能触发一切事件：
+
+````JavaScript
+const EventEmitter = require('events').EventEmitter;
+class SyncEmit extends EventEmitter {
+ constructor() {
+   super();
+   this.emit('ready');
+ }
+}
+
+const syncEmit = new SyncEmit();
+syncEmit.on('ready', () => console.log('Object is ready to be  used'));
+````
+
+如果 ready 事件被异步触发， 先前的代码可能完美运行； 但是事件将同步产生监听器在事件触发后在才注册， 所以结果就是监听器永远不会被调用； console 将不会打印任何信息。
+
+## EventEmitter 对回掉
+
+一种普遍的窘境是在定义异步 API 来检查是否使用 EventEmitter 或是接收回掉时。 普遍的区分规则是根据语义： 回掉应该在结果必须是异步返回时才行； 事件应该在这里不需要关注什么发生时使用。
+
+但是除了这条简单的原则外， 还有很多困惑时刻：
+
+````JavaScript
+function helloEvents() {
+     const eventEmitter= new EventEmitter();
+     setTimeout(() => eventEmitter.emit('hello', 'hello world'), 100);
+     return eventEmitter;
+}
+function helloCallback(callback) {
+     setTimeout(() => callback('hello world'), 100);
+}
+````
+
+这两个函数达到了同样的效果， 我们提供一些简单的技巧来判断使用哪个。
+
+第一个函数， 回掉在支持不同类型的事件时会有一些限制。 实际上， 我们可以传入多种类型的参数来区分事件。 但是这不算是优雅的 API。 在这种情况下 EventEmitter 更适合。
+
+另一个函数 EventEmitter 可能更适合当相同的事件可以多次发生时。 回掉实际上只期待被调用一次， 无论操作成功与否。当然这里使用 EventEmitter 更合适。
+
+最后， 一个使用回掉的接口只可以指定一个回掉， 而 EventEmitter 可以使用多个监听器来接收相同的事件。
+
+## 组合回掉和 EventEmitter
+
+当我们想去暴露一个传统的异步函数作为主要功能时即实现最小表面积原则时， 结合回掉和 EventEmitter 非常有用， 因为通过 EventEmitter 可以提供更丰富的功能和可控性。 这种模式的一个例子是 [node-glob](https://npmjs.org/packa ge/glob), 一个全局央视文件搜索的库。 主要的入口文件是它所暴露出来的  ``glob(pattern, [options], callback) `` 。
+
+这个函数以模式作为第一个参数， 一套设置， 和一个在一系列被模式匹配到的文件作为回掉函数作为参数。 同时， 函数返回一个更加细粒化的程序状态报告 EventEmitter 。 例如， 当一个匹配发生时可以实时报告， 并获取一系列所以匹配的文件， 或者知道程序是否被手动地终止：
+
+````JavaScript
+const glob = require('glob');
+glob('data/*.txt', (error, files) => console.log(`All files found:
+ ${JSON.stringify(files)}`))
+ .on('match', match => console.log(`Match found: ${match}`));
+````
+
+如我们所见， 通过暴露一个简单清晰最小的端点来提供更多高级或更少功能是实践在 Node.js 很常见， 组合 EventEmitter 和回掉很容易实现这类需求。
+
+
+## 总结
+
+在本章， 我们首先学习了同步和异步代码的区别。 然后我们浏览了如何使用回掉和事件触发器来处理一些基本的异步情况。 我们也学习了两种模式间主要的不同并讨论了它们相关的适应情况。 我们只是迈出了朝着了解更高级异步模式的第一步。
+
+下一章我们将看看那些复杂的情况， 学习如何来使用回掉和实践分发器来控制高级的异步控制流。
