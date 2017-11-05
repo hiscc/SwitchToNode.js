@@ -312,3 +312,130 @@ function spiderLinks(currentUrl, body, nesting, callback) {
 1. 我们用 iterate() 函数遍历所有链接， 并取得下一个链接进去分析。 在本函数内， 我们首先要检查的就是索引值是否等于链接数组的长度， 是的话便调用回掉退出
 1. 处理链接。 调用 spider() 函数并降低嵌套层次然后再在操作完成后调用下一次遍历
 1. 我们以 iterate(0) 启动遍历
+
+上面的算法允许我们通过在序列内的一个异步操作遍历一个数组。
+
+我们现在的新版本爬虫可以递归下载网站上的所以链接。 如果链接太多我们可以使用 ``Ctrl + C`` 来退出程序。 我们也可以再次输入相同的 URL 来退出程序。
+
+#### 模式
+
+spiderLinks() 函数展示了如果使用异步操作来遍历一个数组。 这种模式也可以用到其它遍历序列的情形中：
+
+````JavaScript
+function iterate(index) {
+ if(index === tasks.length)  {
+   return finish();
+ }
+ const task = tasks[index];
+ task(function() {
+   iterate(index + 1);
+ });
+}
+function finish() {
+ //iteration completed
+}
+iterate(0);
+````
+
+如果  task() 是异步操作那么这种算法就是真正的递归了。 这样， 栈将被塞满而且可能出现溢出的情况。
+
+我们前面演示的模式很厉害， 它还适用一些其它的状况； 例如， 我们可以对数组作 map 操作或这把结果传入下一个遍历内从而实现 reduce 算法。
+
+### 平行启动
+
+这里还有一种情况即启动的顺序不重要我们只是需要一些任务全部执行完毕再操作。
+
+![](images/3.2.png)
+
+这听起来有些奇怪如果我们知道 Node.js 是单线程的， 但就如我们在第一章探讨的虽然是单线程的但我们依旧可以达到一致性， 这得益于 Node.js 天生的非阻塞性。 实际上， 平行这个词用在此处很合适，因为平行不意味着同步运行， 它们是在非阻塞 API 和事件轮询之下执行的。
+
+正如我们所知， 当任务请求一个新的异步操作时任务的控制权会交还给事件轮询然后事件轮询启动另一个任务。 一个适当形容这种流程的词就是并发性， 当时我们为了简单还是用平行吧。
+
+下图显示两个异步任务可以在 Node.js 中平行：
+
+![](images/3.3.png)
+
+1. Main 函数启动 Task 1 和 Task 2 因为触发器是异步的所以它们迅速把控制权给还给 Main 函数， 然后再返回给事件轮询
+1. 当 Task 1 的异步操作完成后， 事件轮询把控制权返给 Main 函数
+1. 当 Task 2 触发异步操作时， 事件轮询调用它本身的回掉。 当 Task 2 完成后 Main 函数也会收到通知， 所以 Main 会知道 Task 1 和 Task 2 都完成了， 所以就可以继续执行操作了
+
+简单来说， 我们可以在 Node.js 中启动一个平行异步操作， 因为它们同时被内部的非阻塞 APIs 所控制。 在 Node.js 中同步即阻塞的操作不能同时运行除非这些操作被放入到异步操作中或是通过 setTimeout() 或 setImmediate() 所延时。
+
+### 网络爬虫 3
+
+在版本 2 的爬虫里我们使用递归下载了所有链接， 现在我们可以使用平行下载所有链接从而提高性能。
+
+我们来修改 spiderLinks() 函数来让 spider() 任务一次下载完， 并让它在所有任务完成后再启动一个回掉：
+
+````JavaScript
+function spiderLinks(currentUrl, body, nesting, callback) {
+  if (nesting === 0) {
+    return process.nextTick(callback);
+  }
+  const links = utilities.getPageLinks(currentUrl, body);
+  if (links.length === 0) {
+    return process.nextTick(callback);
+  }
+  let completed = 0,
+    hasErrors = false;
+
+  function done(err) {
+    if (err) {
+      hasErrors = true;
+      return callback(err);
+    }
+    if (++completed === links.length && !hasErrors) {
+      return callback();
+    }
+  }
+  links.forEach(link => {
+    spider(link, nesting - 1, done);
+  });
+}
+````
+
+我们来看看发生了什么。 spider() 任务一齐执行。 只通过简单地遍历链接数组就行了， 也不需要等待先前的任务：
+
+````JavaScript
+links.forEach(link => {
+  spider(link, nesting - 1, done);
+});
+````
+
+然后就是让所有任务完成后提供一个特别的回掉即 done() 函数。 done() 函数会在 spider() 函数完成时增加计数。 当所有下载等于链接数量时， 最终的回掉被执行：
+
+````JavaScript
+function done(err) {
+  if(err) {
+   hasErrors = true;
+   return callback(err);
+  }
+  if(++completed === links.length && !hasErrors) {
+   callback();
+  }
+}
+````
+
+就这么简单， 我们不再需要递归来下载页面了因为我们不再需要等待前一个任务完成后再进行下一个了从而提升了性能。
+
+### 模式
+
+通过前面的执行流， 我们可以看到一个很棒的模式：
+
+````JavaScript
+const tasks = [ /* ... */ ];
+let completed = 0;
+tasks.forEach(task => {
+ task(() => {
+   if (++completed === tasks.length) {
+     finish();
+   }
+ });
+});
+
+function finish() {
+ //all the tasks completed
+}
+````
+
+ji
