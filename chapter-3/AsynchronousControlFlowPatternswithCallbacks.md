@@ -438,4 +438,94 @@ function finish() {
 }
 ````
 
-ji
+一个简单的修改我们就可以使用模式来累加每个任务的结果， 来过滤或 map 数组中的每个元素或是在任务完成后调用 finish() 回掉（competitive race）。
+
+### 用同时任务修复竞争条件
+
+在多核心内使用阻塞 I/O 时运行一系列平行任务会有问题。 但是， 对于 Node.js 就是另一回事了； Node.js 平行地运行多个异步操作任务很直接也很方便。 这是 Node.js 最强大的优势。
+
+Node.js 并发性模型的另一个典型之处就是我们在处理同步任务和竞争条件的方式。 在多线程编程内， 通常使用一些如锁、 互斥器、 信号、 监视器等构想， 它们可能是平行化内最复杂的一部分， 同时也对性能产生相当大的影响。 在 Node.js 中， 我们通常不需要花俏的同步机制， 因为所有东西都是单线程运行的！ 但是， 这不意味着我们不会有竞争条件； 相反的， 竞争条件十分普遍。 问题的根源是异步操作的调用和其结果的通知间的延迟。 其实这个问题在我们最后版本的爬虫内就有。
+
+````JavaScript
+function spider(url, nesting, callback) {
+  const filename = utilities.urlToFilename(url);
+  fs.readFile(filename, 'utf8', (err, body) => {
+        if (err) {
+          if (err.code !== 'ENOENT') {
+            return callback(err);
+          }
+          return download(url, filename, function(err, body) {
+                //...
+````
+
+问题就是两个 spider 任务在操作同一个 URL 时可能从一开始就在同一个文件上调用 fs.readFile()，  而后两个任务间有一个完成下载和创建文件， 造成两个任务开始一个下载。 解决方案如下：
+
+![](images/3.4.png)
+
+处理图表展现了 Task 1 和 Task 2 被插入到一个 Node.js 进程， 然后一个异步操作引出一个竞争条件。 在事例中， 两个 spider 任务因为下载同一个文件而结束。
+
+我们该如何解决呢？ 答案比我们想的更简单。 实际上， 我们只需要在运行同一个 URL 上的一个不包含多个 spider 任务的变量：
+
+````JavaScript
+const spidering = new Map();
+
+function spider(url, nesting, callback) {
+  if (spidering.has(url)) {
+    return process.nextTick(callback);
+  }
+  spidering.set(url, true);
+  //...
+````
+
+修复不需要多说。 如果给定的 url 已经存在 spidering 映射内我们就简单地退出函数； 另外， 我们还设置继续下载的标志。 对于这个例子， 我们不需要释放锁， 因为我们不关注下载一个 URL 两次， 即使是当 spider 任务在同一个点被启动两次。
+
+竞争条件可以引发很多问题， 即使是在单进程环境中。 在很多情况下， 它们会导致数据出错而且难以调试因为这问题非常短暂。 所以运行平行任务时多次检查是最佳实践。
+
+## 被限制的平行启动
+
+产生一个失控的平行任务可以导致高额的载入。 想象一下有数千个文件、 URL 需要读取， 数千个数据库查询同时平行运转。 一个普遍的问题是用尽了资源， 例如， 在方程式打开时这些全部会一次性发生。 在一个 web 方程式中， 这可能会产生一个 DoS 攻击。 在这种情况下， 在同一时刻限制平行任务的数量是个好主意。 如此一来， 我们就可以预测载入量并保证服务不会耗尽资源。 下面的图表就描述了一种五个任务分为两个平行运行的情况：
+
+![](images/3.5.png)
+
+1. 起初我们产生了最大限制数的任务
+1. 然后每当任务完成， 我们再产生出更多的任务直到我们没有达到最大限制
+
+### 限制并发
+
+我们在线来限制并发：
+
+````JavaScript
+const tasks = ...
+  let concurrency = 2,
+      running = 0,
+      completed = 0,
+      index = 0;
+
+function next() {                           //[1]
+  while (running < concurrency && index < tasks.length) {
+    task = tasks[index++];
+    task(() => {                            //[2]
+      if (completed === tasks.length) {
+        return finish();
+      }
+      completed++, running--;
+      next();
+    });
+    running++;
+  }
+}
+next();
+
+function finish() {
+  //all tasks finished
+}
+````
+
+这个算法可以算是序列启动和平行启动的混合。 实际上， 我们可能注意到两种模式的相似点：
+
+1. 在 next() 是个遍历函数， 然后一个内遍历产生了尽可能多的平行任务
+1. 我们在每个任务传入的回掉会检查我们是否完成了列表内的所有函数。 如果还有任务需要运行， 它将调用 next() 函数来产生另外一群任务。
+
+### 在全局限制并发
+
+我的爬虫是运用我们学到的并发知识的绝佳的案例。 实际上， 为了避免在同一时间成千上万的爬行情况， 我们可以通过添加一些规则来强制限制这个程序的并发数量。
