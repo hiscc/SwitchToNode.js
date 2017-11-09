@@ -528,4 +528,220 @@ function finish() {
 
 ### 在全局限制并发
 
-我的爬虫是运用我们学到的并发知识的绝佳的案例。 实际上， 为了避免在同一时间成千上万的爬行情况， 我们可以通过添加一些规则来强制限制这个程序的并发数量。
+我们的爬虫是运用我们学到的并发知识的绝佳案例。 实际上， 为了避免出现同一时间成千上万的爬虫情况， 我们可以通过添加一些规则来强制限制这个程序的并发数量。
+
+我们可以在我们 spiderLinks() 函数上运用这种模式， 但我们只能限制单张页面上的链接数量。 我们可以设置并发为 2 ， 这样每个页面只能同时下载两个链接， 然后两个链接后再各下载两个最后呈几何数级增长。
+
+#### 救援队列
+
+我们其实是想限制全局的下载数量。 我们现在通过队列来限制多重任务的并发。
+
+我们使用 TaskQueue 来实现：
+
+````JavaScript
+class TaskQueue {
+  constructor(concurrency) {
+    this.concurrency = concurrency;
+    this.running = 0;
+    this.queue = [];
+  }
+  pushTask(task) {
+    this.queue.push(task);
+    this.next();
+  }
+  next() {
+    while (this.running < this.concurrency && this.queue.length) {
+      const task = this.queue.shift();
+      task(() => {
+        this.running--;
+        this.next();
+      });
+      this.running++;
+    }
+  }
+};
+````
+
+这个构造函数以并发量为参数， 然后初始化 running 和 queue 变量。 以前的变量用来跟踪运行中的任务， 因为后面的数组用作存储未完成任务的队列。
+
+pushTask() 方法简单地为队列添加任务并启动后面的任务。
+
+next() 方法产生一系列队列任务， 并保证不会超出并发限制。
+
+我们可能注意到这个方法和前面的很相似。 它本质上以不超过并发限制的尽可能多的队列任务开始。 当每个任务结束时， 它会更新运行任务的数量并通过 next() 来开始下一轮任务。 TaskQueue 类最有意思的地方在于它允许我们动态向队列添加项。
+
+#### 爬虫 4
+
+既然我们有了新的队列来限制平行流中任务的数量， 我们就在爬虫里试试吧：
+
+````JavaScript
+const TaskQueue = require('./taskQueue');
+const downloadQueue = new TaskQueue(2);
+
+
+function spiderLinks(currentUrl, body, nesting, callback) {
+  if (nesting === 0) {
+    return process.nextTick(callback);
+  }
+  const links = utilities.getPageLinks(currentUrl, body);
+  if (links.length === 0) {
+    return process.nextTick(callback);
+  }
+  let completed = 0,
+    hasErrors = false;
+  links.forEach(link => {
+    downloadQueue.pushTask(done => {
+      spider(link, nesting - 1, err => {
+        if (err) {
+          hasErrors = true;
+          return callback(err);
+        }
+        if (++completed === links.length && !hasErrors) {
+          callback();
+        }
+        done();
+      });
+    });
+  });
+}
+````
+
+新方案很简单：
+
+* 通过自定义回掉启动 spider()
+* 在回掉内检查 spiderLinks() 函数相关的任务是否完成。 如果完成， 调用 spiderLinks() 中最后的回掉
+* 最后， 调用 done() 回掉让队列继续执行
+
+## 异步库
+
+我们以前分析过的控制流模式都可以构建成可重用和更通用的解决方案。 例如， 我们可以包装未限制并发数的算法为一个接收一系列任务的函数， 而这种函数早在 async (https://npmjs.org/package/async) 所做的。 async 库是一个非常流行的解决异步代码的方案。 它提供了一系列函数来简单地操作一系列任务。
+
+### 序列执行
+
+async 库可以帮助我们实现复杂的异步控制流， 但选择合适的辅助方法是个难点。 例如， 对于序列执行流， 这里有 20 多各不同的函数供你选择： eachSeries(), mapSeries(), filterSeries(), rejectSeries(), reduce(), reduceRight(), detectSeries(), concatSeries(), series(), whilst(), doWhilst(), until(), doUntil(), forever(), waterfall(), compose(), seq(), applyEachSeries(), iterator(), timesSeries()。
+
+选择正确的函数是写出简洁可读的代码非常重要的一步， 但这需要经验和实践。
+
+现在我们看看 async 是怎么工作的， 在我们的爬虫内试一下。
+
+先安装 ``npm install async`` 再引入 ``const async = require('async');``
+
+#### 序列执行已知任务
+
+我们的 download() 函数执行下面的序列：
+
+1. 下载一个 URL 的内容
+1. 创建新的目录
+1. 保存 URL 的内容到文件
+
+async.series() 就是理想的函数， ``async.series(tasks, [callback])``
+
+它接收一系列任务和一个回掉作为参数。
+
+async 也使用相同的回掉法则并自动处理错误。 所以有任意任务调用错误回掉， async 将跳过剩下的任务并直接到达最后的回掉：
+
+````JavaScript
+function download(url, filename, callback) {
+  console.log(`Downloading ${url}`);
+  let body;
+  async.series([
+    callback => {                                 //[1]
+      request(url, (err, response, resBody) => {
+        if (err) {
+          return callback(err);
+        }
+        body = resBody;
+        callback();
+      });
+    },
+    mkdirp.bind(null, path.dirname(filename)),    //[2]
+    callback => {                                 //[3]
+      fs.writeFile(filename, body, callback);
+    }
+  ], err => {                                     //[4]
+    if (err) {
+      return callback(err);
+    }
+    console.log(`Downloaded and saved: ${url}`);
+    callback(null, body);
+  });
+}
+````
+
+1. 第一个任务调用 URL  下载。 并返回 response
+1. 第二个任务是创建下载页的目录。
+1. 最后写入内容
+1. 所有任务完成后， 进行错误处理
+
+#### 序列遍历
+
+我们用 async.eachSeries() 来遍历序列：
+
+````JavaScript
+function spiderLinks(currentUrl, body, nesting, callback) {
+  if (nesting === 0) {
+    return process.nextTick(callback);
+  }
+  const links = utilities.getPageLinks(currentUrl, body);
+  if (links.length === 0) {
+    return process.nextTick(callback);
+  }
+  async.eachSeries(links, (link, callback) => {
+    spider(link, nesting - 1, callback);
+  }, callback);
+}
+````
+
+#### 平行执行
+
+重写 spiderLinks() 函数：
+
+````JavaScript
+function spiderLinks(currentUrl, body, nesting, callback) {
+  // ...
+  async.each(links, (link, callback) => {
+    spider(link, nesting - 1, callback);
+  }, callback);
+}
+````
+
+#### 限制平行执行
+
+````JavaScript
+const downloadQueue = async.queue((taskData, callback) => {
+     spider(taskData.link, taskData.nesting - 1, callback);
+}, 2);
+
+function spiderLinks(currentUrl, body, nesting, callback) {
+  if (nesting === 0) {
+    return process.nextTick(callback);
+  }
+  const links = utilities.getPageLinks(currentUrl, body);
+  if (links.length === 0) {
+    return process.nextTick(callback);
+  }
+  const completed = 0,
+    hasErrors = false;
+  links.forEach(function(link) {
+    const taskData = {
+      link: link,
+      nesting: nesting
+    };
+    downloadQueue.push(taskData, err => {
+      if (err) {
+        hasErrors = true;
+        return callback(err);
+      }
+      if (++completed === links.length && !hasErrors) {
+        callback();
+      }
+    });
+  });
+}
+````
+
+## 总结
+
+在本章我们深入学习了 Node.js 的异步控制流并借助 async 来简化普通流程。
+
+下一章将介绍更多的高级技术例如承诺和生成器， 当你掌握了这些你就可以选择最佳的解决方案了。
