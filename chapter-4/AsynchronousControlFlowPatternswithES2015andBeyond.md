@@ -169,4 +169,114 @@ function download(url, filename) {
      .catch(err => console.log(err));
 ````
 
-最重要的是我们通过 readFile() 为 promise 注册了 onRejected() 函数以防页面还未被下载。 
+最重要的是我们通过 readFile() 为 promise 注册了 onRejected() 函数以防页面还未被下载情况的出现。
+
+### 序列遍历
+
+````JavaScript
+function spiderLinks(currentUrl, body, nesting) {
+  let promise = Promise.resolve();
+  if (nesting === 0) {
+    return promise;
+  }
+  const links = utilities.getPageLinks(currentUrl, body);
+  links.forEach(link => {
+    promise = promise.then(() => spider(link, nesting - 1));
+  });
+  return promise;
+}
+````
+
+1. 第一我们定义一个空 promise， 并以 undefined 定义。
+1. 然后， 更新 promise 变量。
+
+### 序列遍历 - 模式
+
+````JavaScript
+let tasks = [ /* ... */ ]
+let promise = Promise.resolve();
+tasks.forEach(task => {
+  promise = promise.then(() => {
+    return task();
+  });
+});
+promise.then(() => {
+  //All tasks completed
+});
+
+let tasks = [ /* ... */ ]
+let promise = tasks.reduce((prev, task) => {
+  return prev.then(() => {
+    return task();
+  });
+}, Promise.resolve());
+promise.then(() => {
+  //All tasks completed
+});
+````
+
+### 平行启动
+
+````JavaScript
+function spiderLinks(currentUrl, body, nesting) {
+  if (nesting === 0) {
+    return Promise.resolve();
+  }
+  const links = utilities.getPageLinks(currentUrl, body);
+  const promises = links.map(link => spider(link, nesting - 1));
+  return Promise.all(promises);
+}
+````
+
+### 限制平行启动
+
+````JavaScript
+next() {
+  while (this.running < this.concurrency && this.queue.length) {
+    const task = this.queue.shift();
+    task().then(() => {
+      this.running--;
+      this.next();
+    });
+    this.running++;
+  }
+}
+
+const TaskQueue = require('./taskQueue');
+const downloadQueue = new TaskQueue(2);
+
+
+function spiderLinks(currentUrl, body, nesting) {
+  if (nesting === 0) {
+    return Promise.resolve();
+  }
+  const links = utilities.getPageLinks(currentUrl, body);
+  //we need the following because the Promise we create next
+  //will never settle if there are no tasks to process
+  if (links.length === 0) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    let completed = 0;
+    let errored = false;
+    links.forEach(link => {
+
+      let task = () => {
+        return spider(link, nesting - 1)
+          .then(() => {
+            if (++completed === links.length) {
+              resolve();
+            }
+          })
+          .catch(() => {
+            if (!errored) {
+              errored = true;
+              reject();
+            }
+          });
+      };
+      downloadQueue.pushTask(task);
+    });
+  });
+}
+````
