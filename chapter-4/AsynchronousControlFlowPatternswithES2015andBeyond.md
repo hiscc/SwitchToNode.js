@@ -280,3 +280,116 @@ function spiderLinks(currentUrl, body, nesting) {
   });
 }
 ````
+
+* First, we needed to return a new promise created using the Promise constructor. As we will see, this enables us to resolve the promise manually, when all of the tasks in the queue are completed.
+* Second, we should look at how we defined the task. What we did is attach an onFulfilled() callback to the promise returned by spider(), so we could count the number of completed downloaded tasks. When the amount of completed downloads matches the number of links in the current page, we know that we are done processing, so we can invoke the resolve() function of the outer promise.
+
+### 在公共接口内暴露回掉和 promise
+
+如前面说的 promise 可以很好的代替回掉。 它们让我们的代码更具可读性。 尽管 promise 很有优势， 但也需要开发者理解更多的概念来正确掌握精通。 还有一些原因也是回掉比 promise 更好用的原因。
+
+现在就来想象我们需要建造一个处理异步操作的公共库。 然后呢？ 创建一个基于回掉或基于 promise 的库？ 还有第三种方案吗？
+
+基于回掉的库被用于像是 request、 redis、 mysql 等提供回掉的简单 API 的库。 而一些其它的库提供了可用 promise 的辅助函数。
+
+还有一种就是提供基于回掉的 API， 但回掉的参数可选。 无论何时被传入一个回掉参数， 函数都不变， 成功失败都会被执行。 当回掉没被传入时， 函数会立即返回一个 Promise 对象。 这种实现有效地结合了回掉和 promise。 许多库已经支持这样做， 像 mongoose 和 sequelize。
+
+我们来看一个简单的实现：
+
+````JavaScript
+module.exports = function asyncDivision(dividend, divisor, cb) {
+  return new Promise((resolve, reject) => {         // [1]
+    process.nextTick(() => {
+      const result = dividend / divisor;
+      if (isNaN(result) || !Number.isFinite(result)) {
+        const error = new Error('Invalid operands');
+        if (cb) {                                   // [2]
+          cb(error);
+        }
+        return reject(error);
+      }
+    if (cb) {                                       // [3]
+        cb(null, result);
+      }
+      resolve(result);
+    });
+  });
+};
+
+
+// callback oriented usage
+asyncDivision(10, 2, (error, result) => {
+  if (error) {
+    return console.error(error);
+  }
+  console.log(result);
+});
+// promise oriented usage
+asyncDivision(22, 11)
+  .then(result => console.log(result))
+  .catch(error => console.error(error));
+````
+
+* 第一， 返回一个新的 promise 构建器。 我们通过给构建器传入参数来定义所以逻辑。
+* 如果出现 error， 我们 reject promise， 但是如果回掉被传入， 我们也会启动回掉来传递错误。
+* 然后计算 promise 的结果， 但是如果有回掉依然是传递回掉里的结果。
+
+
+## Generators
+
+ES2015 引入了另一种机制 generators 也被称作半协同。 在一个函数里我们只能拥有一个入口来反馈函数的结果。 generators 有点像函数， 但是它可以被悬置并在未来某时再继续执行。 Generators 在实现遍历的时候很有用， 听起来很耳熟， 因为我们刚刚讨论了遍历器如何可以实现重要的异步控制流模式。
+
+### generators 基础
+
+在开始前， 我们需要学习一点基础知识。 就从语法开始吧； 一个 generator 函数被加在 function 后的 * 操作符声明：
+
+````JavaScript
+function* makeGenerator() {
+     //body
+}
+
+function* makeGenerator() {
+   yield 'Hello World';
+   console.log('Re-entered');
+}
+````
+
+我们用 yield 关键字返回被传入的值给调用者。
+然后 generator yields 一个字符串 Hello World。 当 generator 返回时， 执行将从 console.log('Re-entered') 开始。
+
+makeGenerator() 本质上也是一个函数， 被调用时返回一个新的 generator 对象：
+
+````JavaScript
+const gen = makeGenerator();
+
+{
+   value: <yielded value>
+   done: <true if the execution reached the end>
+}
+````
+
+generator 最重要的方法就是 next() 了， 被用于开始／返回 generator 的执行然后再返回一个对象。
+
+对象包含被 generator 产出的值和一个指示 generator 是否完成调用的标志。
+
+#### 简单事例
+
+````JavaScript
+function* fruitGenerator() {
+  yield 'apple';
+  yield 'orange';
+  return 'watermelon';
+}
+const newFruitGenerator = fruitGenerator();
+console.log(newFruitGenerator.next()); //[1]
+console.log(newFruitGenerator.next()); //[2]
+console.log(newFruitGenerator.next()); //[3]
+
+//output
+{ value: 'apple', done: false }
+{ value: 'orange', done: false }
+{ value: 'watermelon', done: true }
+````
+
+简单说明一下过程：
+* 
