@@ -392,4 +392,95 @@ console.log(newFruitGenerator.next()); //[3]
 ````
 
 简单说明一下过程：
-* 
+* newFruitGenerator.next() 第一次被调用时， generator 启动并在遇到 yield 命令停止， 并返回值 apple。
+* 第二次调用， generator 启动并在遇到 yield 命令停止， 并返回值 orange。
+* 第三次调用， generator 启动并返回值 watermelon。
+
+#### Generators 作为迭代器
+
+为了理解 generators 对实现迭代器如此有用的原因， 我们就来试一试：
+
+````JavaScript
+function* iteratorGenerator(arr) {
+  for (let i = 0; i < arr.length; i++) {
+    yield arr[i];
+  }
+}
+
+const iterator = iteratorGenerator(['apple', 'orange', 'watermelon']);
+let currentItem = iterator.next();
+while (!currentItem.done) {
+  console.log(currentItem.value);
+  currentItem = iterator.next();
+}
+
+// output
+apple
+orange
+watermelon
+````
+
+在本例中， 每次调用 iterator.next() ， 我们经历 generator 的 for 循环。 这演示了 generator 是如何通过调用来维持。
+
+#### 传递值给 generator
+
+继续探索 generators 的功能， 我们将学习如何传递值给 generator。 这非常简单； 我们仅仅需要为 next() 提供参数， 值通过 yield 语句返回：
+
+````JavaScript
+function* twoWayGenerator() {
+  const what = yield null;
+  console.log('Hello ' + what);
+}
+const twoWay = twoWayGenerator();
+twoWay.next();
+twoWay.next('world');
+````
+
+启动时， 程序将打印 Hello world 这意味着：
+
+* next() 第一次调用时， generator 到了第一个 yield 语句并暂停。
+* next('world') 调用时， generator 从它暂停的点开始， 但是这次我们传值了， 这个值被传入 what 变量。 generator 然后会启动 console.log() 命令并结束。
+
+我们也可以强制 generator 抛出异常：
+
+````JavaScript
+const twoWay = twoWayGenerator();
+twoWay.next();
+twoWay.throw(new Error());
+````
+
+#### generator 与异步控制流
+
+我们来示范一下 generator 如何操控异步控制流：
+
+````JavaScript
+function asyncFlow(generatorFunction) {
+  function callback(err) {
+    if (err) {
+      return generator.throw(err);
+    }
+    const results = [].slice.call(arguments, 1);
+    generator.next(results.length > 1 ? results : results[0]);
+  }
+  const generator = generatorFunction(callback);
+  generator.next();
+}
+
+const generator = generatorFunction(callback);
+generator.next();
+
+if (err) {
+  return generator.throw(err);
+}
+const results = [].slice.call(arguments, 1);
+generator.next(results.length > 1 ? results : results[0]);
+
+const fs = require('fs');
+const path = require('path');
+asyncFlow(function*(callback) {
+  const fileName = path.basename(__filename);
+  const myself = yield fs.readFile(fileName, 'utf8', callback);
+  yield fs.writeFile(`clone_of_${filename}`, myself, callback);
+  console.log('Clone created');
+});
+````
