@@ -484,3 +484,49 @@ asyncFlow(function*(callback) {
   console.log('Clone created');
 });
 ````
+
+记住在 asyncFlow() 函数的帮助下， 我们可以直接写出异步的代码。 传入每个异步函数的回掉将在异步完成后返回。
+
+
+#### 基于 generator 的 co
+
+我们使用 co 来重构我们的爬虫。
+
+#### 序列执行
+
+````JavaScript
+//spider.js
+
+const thunkify = require('thunkify');
+const co = require('co');
+const request = thunkify(require('request'));
+const fs = require('fs');
+const mkdirp = thunkify(require('mkdirp'));
+const readFile = thunkify(fs.readFile);
+const writeFile = thunkify(fs.writeFile);
+const nextTick = thunkify(process.nextTick);
+
+function* download(url, filename) {
+  console.log(`Downloading ${url}`);
+  const response = yield request(url);
+  const body = response[1];
+  yield mkdirp(path.dirname(filename));
+  yield writeFile(filename, body);
+  console.log(`Downloaded and saved ${url}`);
+  return body;
+}
+
+function* spider(url, nesting) {
+  const filename = utilities.urlToFilename(url);
+  let body;
+  try {
+    body = yield readFile(filename, 'utf8');
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      throw err;
+    }
+    body = yield download(url, filename);
+  }
+  yield spiderLinks(url, body, nesting);
+}
+````
