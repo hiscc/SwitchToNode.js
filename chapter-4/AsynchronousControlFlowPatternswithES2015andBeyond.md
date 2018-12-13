@@ -717,7 +717,7 @@ function spiderLinks(currentUrl, body, nesting) {
 ````
 在每一个任务完成后调用 done 函数，然后对下载计数。
 
-#### 利用 babel 使用 Async await
+## 利用 babel 使用 Async await
 
 回掉、promise、 generator 是我们处理异步代码的武器。正如我们所知 generator 很有意思，因为它提供了一种悬置函数启动的方法，并在下一阶段返回。
 
@@ -752,7 +752,7 @@ main 函数用到了 async 和 await。函数以 async 开头，这说明这是�
 
 不幸的是，对于 async、 await 的提案还未完善，虽然已通过但依然需要等待 ECMAScript 的下一版才能使用，所以我们需要 Babel 来提前使用这个新特性。
 
-#### 安装运行 Babel
+### 安装运行 Babel
 
 Babel 是 JavaScript 编译器（转译器），它可以对 JavaScript 的语法进行转译。语法转换可以让我们使用 ES2015，ES2016，JSX 和其它新语法并转换回现在支持的语法。
 
@@ -761,14 +761,14 @@ Babel 是 JavaScript 编译器（转译器），它可以对 JavaScript 的语�
 我们把前面的例子转换一下： **node_modules/.bin/babel-node --plugins
     "syntax-async-functions,transform-async-to-generator"index.js**
 
-#### 比较
+## 比较
 
 现在我们使用了几种方法来驯服异步。每种方案都有优缺点，现在我们来总结一下：
 
 ![](images/4.2.png)
 ![](images/4.3.png)
 
-#### 总结
+## 总结
 
 纵观全局，我们分析了 promise、generator、async 处理异步控制流。
 
