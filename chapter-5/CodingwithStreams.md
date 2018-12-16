@@ -1,6 +1,6 @@
 # Coding with Streams
 
-流是 Node.js 中最重要的组件和模式。在社区中有一句格言： “流是一切！”，这就是流。有很多原因让流充满吸引力；这不仅是关于技术上的性能和效率，这更多的关乎到优雅和适配到 Node.js 哲学。
+流是 Node.js 中最重要的组件和模式。在社区中有一句格言： “流是一切！”，这就是流。有很多原因让流充满吸引力；这不仅是关于技术上的性能和效率，这更多的关乎到对 Node.js 哲学的优雅适配。
 
 在本章，你将学到下面的主题：
 
@@ -558,4 +558,152 @@ Unixs 的管道概念来自 Douglas Mcllroy；这可以让一个程序的输出�
 
 **readable.pipe(writable, [options])**
 
-直觉上， pipe() 方法以从 readable 流中抽取数据然后提供给 writable 流。当可读流触发 end 事件时可写流也自动 end，除非我们在 options 中设置了 {end: false}。pipe() 方法把
+直觉上，pipe() 方法以从 readable 流中抽取数据然后提供给 writable 流。当可读流触发 end 事件时可写流也自动 end，除非我们在 options 中设置了 {end: false}。pipe() 方法把
+把可写流以参数的形式传递，这样就允许我们在流是可读时进行串联调用（像是双工流和转换流）。
+
+管道把两个流汇集到一起并创建一个汇总数据到可写流，这里没有 read 和 write 方法，最重要的是这里不需要处理任何 back-pressure，因为它自动处理。
+
+我们可以创建一个简单的模块来演示一下：
+
+````JavaScript
+// replace.js
+
+const ReplaceStream = require('./replaceStream');
+process.stdin
+  .pipe(new ReplaceStream(process.argv[2], process.argv[3]))
+  .pipe(process.stdout);
+
+````
+
+**echo Hello World! | node replace World Node.js** 这样操作，并且返回 **Hello Node.js**
+
+这个事例演示了流是一个普遍的接口，它可以连接接通几乎所有的接口。
+
+#### 与流工作
+
+目前我们创建流的方式不太 Node.js 的风格；实际上，继承流的基类违反了小表面积原则而且需要一些模版代码。不是说流的设计有问题，而是 Node.js 的核心应该保持精简便于用户扩展。
+
+但是在大多数情况下，我们不需要原型上的所有功能，我们只需要快捷地实现自己所需的部分而已。Node.js 社区当然为此提供了一个解决方案。一个完美的方案就是 [through2](https://npmjs.org/package/through2), 它简化了转化流的创建工作，我们仅仅这样就可以创建一个转换流：
+
+**const transform = through2([options], [_transform], [_flush])**
+
+相同的[from2](https://npmjs.org/package/from2) 允许我们我们简便地创建一个可读流：
+
+**const readable = from2([options], _read)**
+
+## 流与异步控制流程
+
+流不仅仅对处理 I/O 很有用，而且也是一种处理数据的优雅编程模式。它的有点不仅仅体现在表面上而且在异步控制流程上也又重要体现。
+
+### 序列执行
+
+默认状态下，流是序列处理数据的，转换流的 _transform 函数在前一个调用成功前不会在下一个数据块上被调用。这是流很重要的一点，以正确的顺序来处理每个数据块很关键，但是把流用在处理控制流程上依然是一种优雅的选择。
+
+来点代码你就明白了：
+
+````JavaScript
+// concatFiles.js
+
+const fromArray = require('from2-array');
+const through = require('through2');
+const fs = require('fs');
+
+
+function concatFiles(destination, files, callback) {
+  const destStream = fs.createWriteStream(destination);
+  fromArray.obj(files)                         //[1]
+    .pipe(through.obj((file, enc, done) => {   //[2]
+      const src = fs.createReadStream(file);
+      src.pipe(destStream, {end: false});
+      src.on('end', done)                      //[3]
+    }))
+    .on('finish', () => {                      //[4]
+      destStream.end();  
+      callback();
+    });
+}
+module.exports = concatFiles;
+
+
+
+// concat.js
+const concatFiles = require('./concatFiles');
+concatFiles(process.argv[2], process.argv.slice(3), () => {
+  console.log('Files concatenated successfully');
+});
+
+````
+
+这个处理函数实现了通过转换为流来序列遍历文件数组
+
+1. 首先我们我使用了 from2-array 来创建可读流
+1. 然后，我们创建了 through(Transfrom) 流处理每一个在序列内的文件。对于每一个文件，我们创建了一个可读流然后把它接到 destStream 上，并监听它不会在文件完成读取时被关闭。
+1. 当所有源文件的内容被倒入了 destStream 里，我们就调用 done 函数。
+1. 当所有文件被处理完毕后， finish 事件被触发；我们节结束 destStream 并调用回掉函数。
+
+**node concatallTogether.txt file1.txt file2.txt**
+
+这样就创建了 allTogether.txt 容器，并包含了 file1.txt 和 file2.txt。
+
+有了 concatFile 函数我们可以使用流来拥有异步序列遍历器。
+
+### 无序平行执行
+
+我们刚见识了用流来序列化处理每个数据块，但是在大多数情况下这将成为并发的瓶颈。当我们为每个数据块都启动一个慢速的异步操作时，平行执行将加速整体处理速度。这样当每个数据块没有关联时我们就可以采用平行执行了。
+
+#### 实现无序平行流
+
+````JavaScript
+// parallelStream.js
+
+const stream = require('stream');
+
+class ParallelStream extends stream.Transform {
+  constructor(userTransform) {
+    super({objectMode: true});
+    this.userTransform = userTransform;
+    this.running = 0;
+    this.terminateCallback = null;
+  }
+
+  _transform(chunk, enc, done) {
+    this.running++;
+    this.userTransform(chunk, enc, this.push.bind(this),
+    this._onComplete.bind(this));
+    done();
+  }
+
+  _flush(done) {
+    if(this.running> 0) {
+      this.terminateCallback = done;
+    } else {
+      done();
+    }
+  }
+
+  _onComplete(err) {
+    this.running--;
+    if(err) {
+      return this.emit('error', err);
+    }
+    if(this.running === 0) {
+      this.terminateCallback && this.terminateCallback();
+    }
+  }
+
+}
+
+module.exports = ParallelStream;
+
+````
+
+如你所见，构造器函数接受一个 userTransform 函数，它将保存实例变量；我们依旧父类的构造器函数且为了方便开启了对象模式。
+
+然后在 _transform 方法内调用了 userTransform 函数，然后增加了运行中的任务数；最后我们注意到当前的转换任务通过 done 函数调用来完成。这是个触发处理另外一个任务小技巧；我们不再等待 userTransform  函数在 done 函数调用前完成；相反地，我们立即完成了它。换句话说，我们给 userTransform 函数提供了一个特别的回掉 this._onComplete 方法；这允许我们在 userTransform 执行完毕时获取通知。
+
+_flush 方法在流终止前被调用，所以如果这里依然有任务在运行时我们可以通过不调用 done 方法来搁置 finish 事件的释放；相反地，我们把它赋给 this.terminateCallback 变量。为了明白流如何被适时地终止，我们需要看看 _onComplete 方法。这个方法会检查这里是否还有其它在运行的任务，如果没了就直接调用 this.terminateCallback 函数，这会终止流并释放在 _flush 方法内的 finish 事件。
+
+
+ParallelStream 类允许我们简单创建一个可平行启动任务的转换流，但这里有一个警告：他不会保护任务到达的顺序。实际上，异步操作可能随时完成。所以这在处理数据顺序很重要的二进制流时不太好，但是在处理一个对象流时却很有用。
+
+#### 
