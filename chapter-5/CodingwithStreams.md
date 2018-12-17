@@ -706,4 +706,475 @@ _flush 方法在流终止前被调用，所以如果这里依然有任务在运�
 
 ParallelStream 类允许我们简单创建一个可平行启动任务的转换流，但这里有一个警告：他不会保护任务到达的顺序。实际上，异步操作可能随时完成。所以这在处理数据顺序很重要的二进制流时不太好，但是在处理一个对象流时却很有用。
 
-#### 
+#### 实现一个 URL 状态监控应用
+
+现在我们把平行流应用到实例上。假设我们需要构建一个简单的服务来监控一系列 URL 变化。假设所有的 URl 都在一个单独的文件内。
+
+流可以非常有效且优雅地解决这个问题。尤其好似我们使用我们的 ParallelStream 来平行处理这些 URL。
+
+````JavaScript
+// checkUrls.js
+
+const fs = require('fs');
+const split = require('split');
+const request = require('request');
+const ParallelStream = require('./parallelStream');
+
+fs.createReadStream(process.argv[2])                       //[1]
+  .pipe(split())                                           //[2]
+  .pipe(new ParallelStream((url, enc, push, done) => {     //[3]
+    if(!url) return done();
+      request.head(url, (err, response) => {
+          push(url + ' is ' + (err ? 'down' : 'up') + '\n');
+          done();
+        });
+      }))
+      .pipe(fs.createWriteStream('results.txt'))   //[4]
+      .on('finish', () => console.log('All urls were checked'));
+
+````
+
+1. 首先我们为输入的文件创建了一个可读流。
+1. 我们通过 [split](https://npmjs.org/package/split) 获取内容，一个转换流来确保输出每行到一个不同的块上。
+1. 然后使用我们的 ParallelStream 来检查 URl。通过请求每个 url 获取的响应完成检查。当回掉被调用时，我们把操作结果推到流内。
+1. 最后，所有的结果被导入到 results.txt 文件内。
+
+**node checkUrls urlList.txt** 启动执行。
+
+urlList.txt 包含如下一个 URls：
+
+*http://www.mariocasciaro.me
+*http://loige.co
+*http://thiswillbedownforsure.com
+
+当命令行结束运行，我们将看到我们创建的 results.txt ：
+
+*http://thiswillbedownforsure.com is down
+*http://loige.co is up
+*http://www.mariocasciaro.me is up
+
+内容中的 url 顺序已经发生了变化，因为在平行流内无法确认数据块的顺序。
+
+## 限制数量的无序平行执行
+
+如果我们对一个包含了成千上万 URls 的文件执行 checkUrls 函数，一定会遇到麻烦。我们的一次性创建了太多数量的连接了。平行发送大量数据会潜在破坏程序的稳定性与系统的可用性。如我们所知我们最好限制同时加载的任务的数量。
+
+我们创建 limitedParallelStream.js 模块来适配在前面创建的 parallelStream.js。
+
+````JavaScript
+//limitedParallelStream.js
+class LimitedParallelStream extends stream.Transform {
+    constructor(concurrency, userTransform) {
+      super({objectMode: true});
+      this.concurrency = concurrency;
+      this.userTransform = userTransform;
+      this.running = 0;
+      this.terminateCallback = null;
+      this.continueCallback = null;
+    }
+    _transform(chunk, enc, done) {
+      this.running++;
+      this.userTransform(chunk, enc, this._onComplete.bind(this));
+      if(this.running < this.concurrency) {
+        done();
+      } else {
+        this.continueCallback = done;
+         }
+      }
+    _onComplete(err) {
+      this.running--;
+      if(err) {
+        return this.emit('error', err);
+      }
+      const tmpCallback = this.continueCallback;
+      this.continueCallback = null;
+      tmpCallback && tmpCallback();
+      if(this.running === 0) {
+        this.terminateCallback && this.terminateCallback();
+      }
+    }  
+
+````
+
+我们需要 concurrency 来限制数量，而且这次我们有两个回掉，一个用来 pending _transform 方法(continueCallback)，另一个是 _flush 方法的(terminateCallback)。
+
+_transform 方法中我们必须检查在 done 函数前这里是否有运行中的任务而且还触发了对下一个项目的处理。如果我们已经达到了流运行的最大并发数量，我们可以简单地保存 done 回掉给 continueCallback 变量，这样就可以在任务结束时被调用了。
+
+_flush 方法依然和 ParallelStream 类的一致。
+
+每次任务完成我们就会调用 continueCallback 函数来释放流并触发对下一个项目的执行。
+
+### 有序平行执行
+
+在我们前面创建的平行流内，数据的顺序可能是无序的。有时我们需要有序的数据。现在我们可以运行平行转换函数；我们需要做的是对每一个发出的数据排序然后再对接收的数据进行相应的排序。
+
+这个技术会当每个运行任务发出时调用 buffer 来重排数据块。为了简便我们使用一个包来实现这个功能 [through2-parallel](https://npmjs.org/package/through2-parallel)。
+
+我们可以通过修改 checkUrls 模块来实现：
+
+````JavaScript
+// through2-parallel
+
+//...
+const throughParallel = require('through2-parallel');
+
+fs.createReadStream(process.argv[2])
+  .pipe(split())
+  .pipe(throughParallel.obj({concurrency: 2},(url, enc, done) => {
+      //...
+    })
+  )
+  .pipe(fs.createWriteStream('results.txt'))
+  .on('finish', () => console.log('All urls were checked'));
+
+````
+
+正如我们所见， through2-parallel 的接口和 through2 的接口很像；唯一的区别就是我们可以设置并发的数量。如果我们运行这个新版本的 checkUrls 将会看到 results.txt 内的项目顺序和输入文件内的项目顺序一致。
+
+## 管道模式
+
+在一个实时管道系统中， Node.js 流也可以把不同的模式接到一起；实际上我们可以把两个不同的流接成一个，或者把一个流分割成几个，甚至根据条件来控制流的导向。在本节，我们将探索 Node.js  流中最重要的管道系统技术。
+
+### 组合流
+
+在本节内我们一直都在强调流提供了简单的基础设置来模块化或重用我们的代码，但是这里留下了一块最重要的知识点：如果我们想模块化并重用整个管道会怎样呢？如果我们把多个流结合起来会发生什么呢？
+
+![](images/5.6.png)
+
+从图可知：
+
+*当我们对一个组合流进行写入时，我们只是写入了管道内的第一个流
+*当我们从一个组合流内读取数据时，我们实际上读取的时管道内的最后一个流
+
+组合流通常是一个双工流，它被用来连接第一个流到可写的一边，连接最后的流到可读的一边。
+
+实际上关于组合流最重要的特性是它可以捕获整条管道内由任意流发出的错误。正如我们已经说过的任意错误不会自动接到管道中；所以如果我们需要合适的错误管理器，我们必须明确地为每一个流附加错误监听器。但是如果一个组合流是一个黑盒一样的话，我是是说我们无法获取到任何中间的流的话，那么让组合流在管道内累计所有错误将会至关重要。
+
+总结一下，组合流有两个主要的优势：
+
+*我们可以通过隐藏它的内部管道来重新分配它
+*我们有了简化的错误管理器，我们不必为每个流附件错误监听器只需要附加给组合流本身即可
+
+组合流是一项普遍的技术，有很多现成的解决方案想 [multipipe](https://www.npmjs.org/package/multipipe) 或者 [combine-stream](https://www.npmjs.org/package/combine-stream)。
+
+#### 实现一个组合流
+
+为了说明一个简单的例子，我们考虑下下面的转换流：
+
+* 两个压缩并加密的数据
+* 两个解密并解压缩的数据
+
+使用类似 multipipe 的库我们可以简单地构建这些流：
+
+````JavaScript
+// combinedStreams.js
+
+const zlib = require('zlib');
+const crypto = require('crypto');
+const combine = require('multipipe');
+
+module.exports.compressAndEncrypt = password => {
+  return combine(
+    zlib.createGzip(),
+    crypto.createCipher('aes192', password)
+  );
+};
+
+module.exports.decryptAndDecompress = password => {
+  return combine(
+    crypto.createDecipher('aes192', password),
+    zlib.createGunzip()
+  );
+};
+
+````
+
+现在我们可以像黑盒一样使用这些组合流，例如创建一个压缩加密的文件：
+
+````JavaScript
+//archive.js
+const fs = require('fs');
+const compressAndEncryptStream =  require('./combinedStreams').compressAndEncrypt;
+
+fs.createReadStream(process.argv[3])
+  .pipe(compressAndEncryptStream(process.argv[2]))
+  .pipe(fs.createWriteStream(process.argv[3] + ".gz.enc"));
+
+````
+
+我们可以通过组合流来提升这些处理代码，这次不是用于可用性只是为了处理错误。因为正如我们以前说过很多遍的，流只会捕获最后一个流发出的错误：
+
+````JavaScript
+fs.createReadStream(process.argv[3])
+  .pipe(compressAndEncryptStream(process.argv[2]))
+  .pipe(fs.createWriteStream(process.argv[3] + ".gz.enc"))
+  .on('error', err => {
+    //Only errors from the last stream
+    console.log(err);
+  });
+
+````
+
+但是通过组合流我们可以修复这个问题：
+
+````JavaScript
+//archive.js
+const combine = require('multipipe');
+const fs = require('fs');
+const compressAndEncryptStream = require('./combinedStreams').compressAndEncrypt;
+
+combine(
+  fs.createReadStream(process.argv[3])
+  .pipe(compressAndEncryptStream(process.argv[2]))
+  .pipe(fs.createWriteStream(process.argv[3] + ".gz.enc"))
+).on('error', err => {
+  //this error may come from any stream in the pipeline
+  console.log(err);
+});
+
+````
+正如我们所见：运用组合流可以捕获到管道内所有流的错误。这样运行程序 **node archive mypassword/path/to/a/file.txt**
+
+这个事例清晰地示意了组合流的重要性；一方面来说它允许我们创建可重用的流组合，另一方面来说它简化了管道内的错误处理。
+
+### 分叉流
+
+我们可以通过把一个可读流导成几个可写流来实现分叉流。在我们想把同一个数据发送道不同的地方时这很有用，例如两个不同的插口或文件。也可以在同一数据上进行不同的转换，或者当我们想基于同样的标准来分割数据。
+
+![](images/5.7.png)
+
+#### 实现一个多重校验生成器
+
+我们来创建一个输出给定文件的 sha1 和 md5 的工具：
+
+````JavaScript
+// generateHashes.js
+const fs = require('fs');
+const crypto = require('crypto');
+
+const sha1Stream = crypto.createHash('sha1');
+sha1Stream.setEncoding('base64');
+
+const md5Stream = crypto.createHash('md5');
+md5Stream.setEncoding('base64');
+
+const inputFile = process.argv[2];
+const inputStream = fs.createReadStream(inputFile);
+inputStream
+  .pipe(sha1Stream)
+  .pipe(fs.createWriteStream(inputFile + '.sha1'));
+
+inputStream
+  .pipe(md5Stream)
+  .pipe(fs.createWriteStream(inputFile + '.md5'));
+````
+
+很简单对吧？但依然有一些点指的注意：
+
+*sha1Stream 和 md5Stream 将在 inputStream 结束时自动终止，除非在调用 pipe 方法时指定 {end: false}
+*两个分叉将接收相同的数据块，所以我们在对数据执行副作用操作时必须非常小心，因为这将影响到每个分叉的流
+*Back-pressure 将开箱即用；inputStream 流的速度取决于最慢的分叉流
+
+## 合并流
+
+合并流是分叉流的反向实现，它连接一组可读流到一个可写流内：
+
+![](images/5.8.png)
+
+合并多个流到一个是一个普遍简单的操作；但是，我们必须对 end 事件重点处理，因为管道使用的 auto end 选项将会因为其中一个流的结束而导致最终的流提前结束。这经常导致错误的产生，因为其它活跃的资源将持续写入已经终止的流。我们需要在导入多个资源到最终流时设置 {end: false} 来解决这个问题，然后再调用 end 函数。
+
+### 从多个目录创建一个压缩包
+
+我们来实现一个压缩两个目录内容的压缩包小程序，首先先介绍两个包：
+* [tar](https://npmjs.org/package/tar)：一个创建压缩包的流类型包
+* [fstream](https://npmjs.org/package/fstream)：一个从文件系统中创建对象流的库
+
+````JavaScript
+// mergeTar.js
+const tar = require('tar');
+const fstream = require('fstream');
+const path = require('path');
+
+const destination = path.resolve(process.argv[2]);
+const sourceA = path.resolve(process.argv[3]);
+const sourceB = path.resolve(process.argv[4]);
+
+const pack = tar.Pack();
+pack.pipe(fstream.Writer(destination));
+
+
+let endCount = 0;
+function onEnd() {
+ if(++endCount === 2) {
+   pack.end();
+ }
+}
+
+const sourceStreamA = fstream.Reader({type: "Directory", path: sourceA})
+ .on('end', onEnd);
+const sourceStreamB = fstream.Reader({type: "Directory", path: sourceB})
+ .on('end', onEnd);
+
+sourceStreamA.pipe(pack, {end: false});
+sourceStreamB.pipe(pack, {end: false});
+
+
+````
+
+在前面的代码中，我们创建了读取两个源目录的流；然后为每个流附加了 end 监听器，它们将在两个文件读取完毕后终止 pack 流。
+
+我们导入两个源到 pack 流，并设置了 {end: false} 给两个 pipe 调用。
+
+这样我们就实现了一个简单的压缩工具。这样使用： **node mergeTar /path/to/sourceA /path/to/sourceB **
+
+总结一下，值得一提的是这里有很多包会简化合并流：
+
+* [merge-stream](https://npmjs.org/package/merge-stream)
+* [multistream-merge](https://npmjs.org/package/multistream-merge)
+
+对于可并流还有一点是，数据倒进最终流是随机混合的；这对一些对象类型的流来说是可接收的但对一些二进制流来说是不需要的副作用。
+
+但是这里有一种变种的模式允许我们有序的合并流；它会一个一个来消费流，当前一个流结束，下一个流就会发出块（类似于把流串联起来）。
+
+## 多路传输与解多路传输
+
+这里有一个关于合并流特别的变体如图：
+
+![](images/5.9.png)
+
+合并多个流为一体（channels）并以单个流的形式来传播叫做多路传输，对对于这种情况的反操作就叫作解多路传输。对这两种操作的设备叫作多路复用器（mux）和解多路复用器（demux）。这是个在计算机科学和电信学科中广泛的概念，因为他几乎是任何类型传输媒体的基础，像电话、广播、电视、当然还有因特网。内容有限我们不进行深入的了解了，这是个非常庞大的话题。
+
+### 构建远程记录仪
+
+我们来个实例解释一下。我们现在需要开始一个子进程来重定向标准输出和标准错误到远程服务器上，这将把两个流导进两个文件中。所以这在里我们需要共享一个 TCP 连接，因为两个 channel（stdout 和 stderr） 将被多路传输。我们将用到一种叫分组交换的技术，相同的技术也用在 IP、TCP、UDP 协议上。由数据包装进 packet 允许我们指定许多元数据、有用的多路传输、路由、管理流，检测问题数据等。我们将要实现的例子非常极简；实际上我们将简化包装我们的数据到 packet：
+
+![](images/5.10.png)
+
+就像上图显示的，一个 packet 包含有一些基础数据，也包含有头部（Channel ID + Data 长度），这将用于区分每个流的数据并使多路传输路由到正确的 channel。
+
+#### 客户端 - 多路复用
+
+我们来实现我们应用的客户端部分。
+
+````JavaScript
+// client.js
+const child_process = require('child_process');
+const net = require('net');
+
+function multiplexChannels(sources, destination) {
+  let totalChannels = sources.length;
+  for(let i = 0; i <sources.length; i++) {
+    sources[i]
+      .on('readable', function() {                           //[1]
+        let chunk;
+        while((chunk = this.read()) !== null) {
+          const outBuff = new Buffer(1 + 4 + chunk.length);  //[2]
+          outBuff.writeUInt8(i, 0);        
+          outBuff.writeUInt32BE(chunk.length, 1);
+          chunk.copy(outBuff, 5);
+          console.log('Sending packet to channel: ' + i);
+          destination.write(outBuff);                        //[3]
+        }
+      }
+      .on('end', () => {                                     //[4]
+        if(--totalChannels === 0) {
+           destination.end();
+        }
+      });
+  }
+}
+
+const socket = net.connect(3000, () => {                    //[1]
+  const child = child_process.fork(                         //[2]
+  process.argv[2],
+  process.argv.slice(3),
+    {silent: true}
+  );
+  multiplexChannels([child.stdout, child.stderr], socket);  //[3]
+});
+
+
+````
+
+multiplexChannels 函数以输入作为源流和目的 channel 并被多路传输，然后执行下面的步骤：
+
+1. 对每个事件流它注册了 readable 事件，这个事件中我们使用非流模式来读取数据。
+1. 当数据块被读取时，我们把它序列包装进 packet： 为 channel ID 指定 1 byte（UInt8）， 4 byte （UInt32BE） 的 packet 体积，还有具体数据。
+1. 当 packet 准备好时，我们把它写入目的流。
+1. 最后，当所有源流都结束时我们注册一个 end 事件来终止目的流。
+
+在最后的操作里：
+
+1. 我们创建一个新的 TCP 客户端来连接 localhost：3000。
+1. 我们以第一个命令行参数作为路径来开始子进程，我们指定了 {silent: true} 来使子进程不进程父类的 stdout 和 stderr。
+1. 最后，我们用 multiplexChannels 函数把 stdout 和 stderr 并多路传输进插口。
+
+
+#### 服务端 - 解多路传输
+
+现在我们来看看服务端：
+
+
+````JavaScript
+// server.js
+
+const net = require('net');
+const fs = require('fs');
+
+function demultiplexChannel(source, destinations) {
+  let currentChannel = null;
+  let currentLength = null;
+
+  source
+    .on('readable', () => {                                      //[1]
+      let chunk;
+      if(currentChannel === null) {                              //[2]
+        chunk = source.read(1);
+        currentChannel = chunk && chunk.readUInt8(0);
+      }
+
+      if(currentLength === null) {                               //[3]
+        chunk = source.read(4);
+        currentLength = chunk && chunk.readUInt32BE(0);
+        if(currentLength === null) {
+          return;
+        }
+      }
+
+    chunk = source.read(currentLength);                         //[4]
+    if(chunk === null) {
+      return;
+    }
+    console.log('Received packet from: ' + “currentChannel);
+    destinations[currentChannel].write(chunk);                  //[5]
+    currentChannel = null;
+    currentLength = null;
+  })
+  .on('end', ()=> {                                             //[6]
+    destinations.forEach(destination => destination.end());
+    console.log('Source channel closed');
+  });
+}
+
+net.createServer(socket => {
+  const stdoutStream = fs.createWriteStream('stdout.log');
+  const stderrStream = fs.createWriteStream('stderr.log');  
+  demultiplexChannel(socket, [stdoutStream, stderrStream]);
+}).listen(3000, () => console.log('Server started'));
+
+
+````
+
+下面的处理代码看起来有点复杂其实不是的；由于 Node.js 可读流的拉特性，我们可以简单地实现解多路传输：
+
+1. 我们以 non-flowing 模式读取流。
+1. 首先，如果还没有读取到 channel ID，就尝试读取 1 byte 的流数据然后把它们转换到一个数字。
+1. 下一步就是读取数据的长度。我们需要 4 byte，但在内部的 buffer 内可能没有足够的数据，这会使 this.read() 调用返回 null。如果那样，我们简单地打断解析并在 readable 事件内重试。
+1. 当我们最终读取到数据大小时，我们知道有多少数据在内部 buffer 中，所以我们试着读取全部。
+1. 当我们读取所有数据时，我们可以写入到正确的目标 channel，确认重置 currentChannel 和 currentLength 变量（这将用于解析下一个 packet）。
+1. 最后，当源 channel 结束时目的 channel 也将结束。
+
+
+最后我们解多路传输。在处理代码内，首先开始一个 TCP 服务，然后对于每个连接创建两个只想两个不同文件的可写流，一个用于标准输出，另一个用于标准错误；这就是我们的目的 channel。最后，我们使用 demultiplexChannel 函数来解多路传输插口流到 stdoutStream 和  stderrStream。
+
+#### 启动
