@@ -215,7 +215,7 @@ promise.then(() => {
 });
 ````
 
-### 平行启动
+### 并行启动
 
 ````JavaScript
 function spiderLinks(currentUrl, body, nesting) {
@@ -228,7 +228,7 @@ function spiderLinks(currentUrl, body, nesting) {
 }
 ````
 
-### 限制平行启动
+### 限制并行启动
 
 ````JavaScript
 next() {
@@ -601,9 +601,9 @@ co(function* () {
 
 最后是最关键的 co 函数，co 将自动包装我们传进 yield 语句的 generator，并且这是递归的。
 
-#### 平行启动
+#### 并行启动
 
-对于 generator 来说序列执行很简单但对于平行执行就显得无力了。实际上，这个模式简化了基于回掉和 promise 的函数。
+对于 generator 来说序列执行很简单但对于并行执行就显得无力了。实际上，这个模式简化了基于回掉和 promise 的函数。
 
 其实 co 允许我们通过 yield 不限制数量 promise、thunks、generators 或 generator 函数。
 
@@ -620,12 +620,12 @@ function* spiderLinks(currentUrl, body, nesting) {
 
 ````
 
-我们收集了所有 generator 的下载任务，然后 yield 结果数组。所有的任务将被 co 平行启动并返回。
+我们收集了所有 generator 的下载任务，然后 yield 结果数组。所有的任务将被 co 并行启动并返回。
 
-我们用 co 平行启动 spider 函数并返回 promise。这样我们可以等待 done 函数来 resolve 结果。一般来说，所有基于 generator 的库都差不多，所以我们可以把 generator 转换为回掉或者 promise。
+我们用 co 并行启动 spider 函数并返回 promise。这样我们可以等待 done 函数来 resolve 结果。一般来说，所有基于 generator 的库都差不多，所以我们可以把 generator 转换为回掉或者 promise。
 
 
-#### 限制平行执行
+#### 限制并行执行
 
 既然我们已经知道了如何处理非序列执行，我们来实现第四版的爬虫：
 
@@ -681,7 +681,7 @@ class TaskQueue {
 
 ````
 
-我们的线程很简单，它被 co 包装起来以便平行执行。在内部每个线程都在一个无限循环的 block 上等待新任务加入队列（yield self.nextTask()），当有新任务加入时，它 yield 任务并等待完成。你可能想知道我们怎么等待下一个任务。这就是 nextTask() 做的。
+我们的线程很简单，它被 co 包装起来以便并行执行。在内部每个线程都在一个无限循环的 block 上等待新任务加入队列（yield self.nextTask()），当有新任务加入时，它 yield 任务并等待完成。你可能想知道我们怎么等待下一个任务。这就是 nextTask() 做的。
 
 1. 这个方法返回一个可被 co yield 的 thunk 对象
 1. thunk 回掉被 taskQueue 函数中的下一个任务调用，这将迅速放开线程并提供下一个任务来 yield
@@ -693,7 +693,7 @@ class TaskQueue {
 
 #### 限制任务下载并发
 
-既然我们已经使用了 generator 实现了限制数量的平行算法，我们就可以把它们应用在第四版的爬虫上。
+既然我们已经使用了 generator 实现了限制数量的并行算法，我们就可以把它们应用在第四版的爬虫上。
 
 ````JavaScript
 const TaskQueue = require('./taskQueue');
