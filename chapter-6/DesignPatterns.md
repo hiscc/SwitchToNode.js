@@ -1,12 +1,12 @@
 # Chapter 6. Design Patterns
 
-设计模式是解决一个复现问题的可重用方案；定义的很宽它会跨越一个应用的多个领域。但是它经常会和一系列众所周知的面向对象模式产生关联。有本叫《Design Patterns: Elements of Reusable Object-Oriented Software, Pearson Education》的书在九十年代就很出名，它由赫赫有名的四人帮（GoF）所作：Erich Gamma, Richard Helm, Ralph Johnson, 和 John Vlissides。我们将经常提及一些传统的设计模式，或者是 GoF 设计模式。
+设计模式是解决一个复现问题的可重用方案；定义的很宽它会跨越一个应用的多个领域。但是它经常会和一系列众所周知的面向对象模式产生关联。有本叫《Design Patterns: Elements of Reusable Object-Oriented Software, Pearson Education》的书在九十年代就很出名，它由赫赫有名的四人帮（GoF）：Erich Gamma, Richard Helm, Ralph Johnson, 和 John Vlissides 所作。我们将经常提及一些传统的设计模式，或者是 GoF 设计模式。
 
 在 JavaScript 中一系列面向对象设计模式不像经典的面向对象那样直接正式。正如我们所知的，JavaScript 是一门多范式面向对象基于原型拥有动态类型的语言；它把函数作为第一类公民，允许函数式编程。这些特性使 JavaScript 变得十分灵活，它赋给开发者强大的能力的同时也带来了破碎的编程风格、约定、技术，以及最终的生态模式。在 JavaScript 中有太多的办法来完成一件事。一个明显的佐证就是 JavaScript 中大量的框架库；也许其它语言都不曾有过这么多，特别是 Node.js 的出现更给 JavaScript 带来了全新的可能性。
 
-在这种环境下，传统的设计模式也被 JavaScript 所影响。这里有很多方法也可由传统的设计模式所实现。在一些事例中，它们甚至不太可能，因为 JavaScript 不有真正的类或抽象接口。但每个设计模式原本的出发点和解决问题的关键概念没有变化。
+在这种环境下，传统的设计模式也被 JavaScript 所影响。这里有很多方法也可由传统的设计模式所实现。在一些事例中，它们甚至不太可能，因为 JavaScript 没有真正的类或抽象接口。但每个设计模式原本的出发点和解决问题的关键概念是没有变化的。
 
-在本章，我们将探索一些应用到 Node.js 和它设计哲学中的最重要的 GoF 设计模式，从而从另一个角度重新看待它们的重要性。在这些传统的设计模式中，我们也会找到一些因为 JavaScript 生态而没那么“传统”的设计模式。
+在本章，我们将探索一些应用到 Node.js 和它设计哲学中的最重要的 GoF 设计模式。从而从另一个角度重新看待它们的重要性。在这些传统的设计模式中，我们也会找到一些因为 JavaScript 生态而没那么“传统”的设计模式。
 
 我们将在本章探索一下设计模式：
 
@@ -45,7 +45,7 @@ createImage 工厂看起来完全多此一举；为什么不直接用 new 操作
 const image = new Image(name)
 ````
 
-正如我们前面提及的，使用 new 绑定我们的代码到一个特别类型的的对象上；拿前面的例子说指 Image 对象类型。因为一个工厂拥有更多的灵活性；假设我们想去重构 Image 类，把它分割成更小的类，支持每一个图片格式。如果我们我们只暴露一个工厂来创建新的图片，我们可以这样做：
+正如我们前面提及的，使用 new 绑定我们的代码到一个特别类型的的对象上；拿前面的例子说，是指 Image 对象类型。因为一个工厂拥有更多的灵活性；假设我们想去重构 Image 类，把它分割成更小的类，支持每一个图片格式。如果我们我们只暴露一个工厂来创建新的图片，我们可以这样做：
 
 ````JavaScript
 function createImage(name) {
@@ -65,7 +65,7 @@ function createImage(name) {
 
 ### 强制封装机制
 
-因为闭包的存在，工厂也可以用于强制封装。我们直到在 JavaScript 中我们没有入口级修饰符（例如我们没有私有变量），所以强制封装的唯一方法是通过函数作用域和闭包。工厂可以直接封装私有变量：
+因为闭包的存在，工厂也可以用于强制封装。我们知道在 JavaScript 中没有入口级修饰符（例如我们没有私有变量），所以强制封装的唯一方法是通过函数作用域和闭包。工厂可以直接封装私有变量：
 
 
 ````JavaScript
@@ -702,3 +702,514 @@ db.put('2', {doctype: 'company', name: 'ACME Co.'});
 
 
 ## 适配器
+
+适配器模式允许我们使用一个不同的接口来获取一个对象的功能。正如名字说的，它适配了一个对象以便它可被期待不同接口的组件使用。
+
+![](images/6.3.png)
+
+图例展现了通过暴露出一个不同的接口对一个适配者的包装。适配者上被调用的多个方法可以被适配器组合起来。从实现的角度来说，组合是最常见的技术，适配器方法提供了到适配者方法之间的桥梁。这个模式很直接，我们来看看实例。
+
+### 通过文件系统的 API 来使用 LevelUP
+
+我们将构建一个 LevelUP API 的适配器，并发它转化进核心 fs 模块内。尤其是，我们将使每一个 readFile 和 writeFile 调用转化为 db.get 和 db.put；这样我们就可以用 LevelUP 数据库来做基本的文件操作了。
+
+我们以创建一个新的模块开始：
+
+````JavaScript
+//fsAdapter.js
+
+const path = require('path');
+
+module.exports = function createFsAdapter(db) {
+  const fs = {};
+
+  fs.readFile = (filename, options, callback) => {
+  if(typeof options === 'function') {
+    callback = options;
+    options = {};
+  } else if(typeof options === 'string') {
+    options = {encoding: options};
+  }
+  db.get(path.resolve(filename), {                   //[1]
+      valueEncoding: options.encoding
+    },
+    (err, value) => {
+      if(err) {
+        if(err.type === 'NotFoundError') {           //[2]
+          err = new Error(`ENOENT, open "${filename}"`);
+          err.code = 'ENOENT';
+          err.errno = 34;
+          err.path = filename;
+        }
+        return callback && callback(err);
+      }
+      callback && callback(null, value);             //[3]
+    }
+  );
+};
+
+  fs.writeFile = (filename, contents, options, callback) => {
+    if(typeof options === 'function') {
+      callback = options;
+      options = {};
+    } else if(typeof options === 'string') {
+      options = {encoding: options};
+    }
+
+    db.put(path.resolve(filename), contents, {
+        valueEncoding: options.encoding
+    }, callback);
+  }
+  return fs;
+}
+
+````
+
+在代码中，我们必须做一些额外的工作来确保新函数的行为尽可能接近原 fs.readFile 的行为。
+
+1. 调用 db.get 从 db 类取回一个文件，通过确认后的全路径使用 filename 作为键。设置数据库 valueEncoding 的值等于任何最终输入 encoding 选项。
+1. 如果键没有在数据库中被找到，我们创建一个 ENOENT 作为错误码，这个错误码是 fs 模块以前就使用的。
+1. 如果键值对被数据库成功返回，我们通过回掉返回这个值。
+
+这个函数还很粗糙；我们继续实现 writeFile 函数：
+
+
+在这个例子中，我们简单包装了一下并忽略了一个文件权限(options.mode)，最后返回 fs。
+
+
+````JavaScript
+const fs = require('fs');
+
+fs.writeFile('file.txt', 'Hello!', () => {
+  fs.readFile('file.txt', {encoding: 'utf8'}, (err, res) => {
+    console.log(res);
+  });
+});
+
+//try to read a missing file
+fs.readFile('missing.txt', {encoding: 'utf8'}, (err, res) => {
+  console.log(err);
+});
+
+{ [Error: ENOENT, open 'missing.txt'] errno: 34, code: 'ENOENT', path: 'missing.txt' }
+Hello!
+````
+
+代码使用了 fs API 来处理一些读写操作，并打印出一些错误。
+
+现在我们试着用我们的适配器来代理 fs 模块：
+
+````JavaScript
+const levelup = require('level');
+const fsAdapter = require('./fsAdapter');
+const db = levelup('./fsDB', {valueEncoding: 'binary'});
+const fs = fsAdapter(db);
+
+````
+
+### 真实情景
+
+这里有一大堆适配器的真实例子：
+
+* LevelUP 可以在不同的存储后端上工作。所以这里有很多适配了 LevelUP 的适配器实现：https://github.com/rvagg/node-levelup/wiki/Modules#storage-back-ends。
+
+* jugglingdb 是一个多数据库 ORM，当然也有多个适配器来保证它对各个数据库的兼容：https://github.com/1602/jugglingdb/tree/master/lib/adapters。
+
+* 替代我们创建的例子的最完美实现 [level-filesystem](https://www.npmjs.org/package/level-filesystem)。
+
+## 策略
+
+策略模式是允许一个叫上下文的对象把可变部分提取为单独的可交换对象的不同逻辑模式。上下文实现了一系列算法的通用逻辑，而策略实现了可变部分，允许上下文根据不同因素（如输入值，系统配置或用户首选项）调整其行为。策略通常是一系列解决方案的一部分，并且所有这些策略都实现了相同的接口，这是上下文所期望的接口。
+
+![](images/6.4.png)
+
+上下文对象可以把不同的策略加进它的结构中，就像它们是披萨可替代的一部分一样。就像是一辆可以适应不同路段的汽车一样。由于它们的螺柱，我们可以在雪路上安装冬季轮胎，我们可以在高速公路，长途旅行中安装高性能轮胎。换句话说虽然路路况不同但我们不必换辆车。
+
+这种模式的出色之处在于，它不仅可以分离出在算法中的不同，而且也可以弹性地适配同一个问题中各式各样的差异。
+
+策略模式特别适用于支持算法的变化需要复杂的条件逻辑的情况例如 if...else 或 switch 语句，或者混和不同算法到一起。假设有一个叫 Order 的对象，它有一个 pay 方法，为了支持不同的支付系统我们就可以用到策略模式：
+
+* 使用 if...else 语句完成付款选项
+* 委托支付逻辑到策略对象
+
+第一个方案中，我们的 Order 对象不能支持支付方法除非是修改代码。随着支付选项增加这会变得更加复杂化。而使用策略模式将使 Order 对象支持无限制的支付方法。
+
+
+### 多格式配置对象
+
+我们有一个叫 Config 的对象，它拥有一系列配置参数，例如数据库地址，服务器端口等。 Config 对象应该提供一个简单的接口来获取到这些参数，而且也应有一个持久性储存来导入导出这些配置，例如一个文件。我们需要支持各种储存配置的格式，例如 JSON、INI、YAML。
+
+通过我们学到了策略模式，我们可以迅速识别出 Config 对象内的可变部分，就是序列和反序列的功能。
+
+````JavaScript
+//config.js
+const fs = require('fs');
+const objectPath = require('object-path');
+
+class Config {
+  constructor(strategy) {
+    this.data = {};
+    this.strategy = strategy;
+  }
+
+  get(path) {
+    return objectPath.get(this.data, path);
+  }
+  set(path, value) {
+    return objectPath.set(this.data, path, value);
+  }
+  read(file) {
+    console.log(`Deserializing from ${file}`);
+    this.data = this.strategy.deserialize(fs.readFileSync(file, 'utf-8'));
+  }
+
+  save(file) {
+    console.log(`Serializing to ${file}`);
+    fs.writeFileSync(file, this.strategy.serialize(this.data));
+  }
+}
+module.exports = Config;
+
+````
+
+我们把配置数据包含进实例变量(this.data)中，然后提供了 set 和 get 方法来获取配置属性，并利用 obejct-path 包来使用点语法。我们把 strategy 作为输入，它将用于序列和反序列数据。
+
+当我们从文件中读取配置时，我们委托反序列任务给 strategy；然后当我们想去保存配置到文件中时，我们使用 strategy 来序列化配置。这个简单的设计允许 Config 对象支持不同的文件格式。
+
+创建几个策略：
+
+````JavaScript
+//strategies.js
+
+module.exports.json = {
+  deserialize: data => JSON.parse(data),
+  serialize: data => JSON.stringify(data, null, '  ')
+}
+
+const ini = require('ini'); //-> https://npmjs.org/package/ini
+module.exports.ini = {
+  deserialize: data => ini.parse(data),
+  serialize: data => ini.stringify(data)
+}
+
+````
+
+
+````JavaScript
+//configTest.js
+
+const Config = require('./config');
+const strategies = require('./strategies');
+
+const jsonConfig = new Config(strategies.json);
+jsonConfig.read('samples/conf.json');
+jsonConfig.set('book.nodejs', 'design patterns');
+jsonConfig.save('samples/conf_mod.json');
+
+const iniConfig = new Config(strategies.ini);
+iniConfig.read('samples/conf.ini');
+iniConfig.set('book.nodejs', 'design patterns');
+iniConfig.save('samples/conf_mod.ini');
+
+````
+
+我们的测试模块揭露了策略模式的属性。我们只定义了一个 Config 类来实现配置管理的通用部分，而策略是会改变的。
+
+前面的例子只显示了我们选择策略的可能替代方案之一。 其他有效的方法可能是以下：
+
+* 创建两个不同的策略：一个用以反序列化另一个用来序列化。这将允许从同一个格式读取数据然后存入另一种格式中。
+* 依据提供的文件名拓展来动态选择策略；Config 对象可以维持一个映射 extension -> strategy 然后通过文件拓展名选择正确的算法。
+
+正如我们看到的，这里有一些选项来选择策略，正确的一个只取决于我们的要求和我们想要获得的功能/简单性的权衡。
+
+实现的本身也可以不同；对于最简单的格式，上下文和策略都可以是简单的函数：
+
+**function context(strategy) {...}**
+
+### 真实情景
+
+[passport.js](http://passportjs.org) 是一个权限框架，它允许服务端实现不同的授权模型。我们可以提供以 Facebook 登录或 Twitter 登录功能到我们的 web 应用。Passport 使用了策略模式来分离在授权过程中要求的通用逻辑。例如，我们可能使用 OAuth 来获取 access token 来获取用户 Facebook 或 Twitter 的信息，或者简单地使用本地数据库来验证用户名和密码，我们可以预知，这个库支持无限制的授权服务。
+
+
+## 状态
+
+状态是策略模式的变体，其中策略根据上下文的状态而变化。在前面的章节里我们可以看到策略hi可以依据用户的喜好来变化的。
+
+作为替代，在状态模式内，策略（在此被叫作“状态”）是动态的，它可以在上下文的生命周期内变化，因此允许它的行为适用于它的内部状态：
+
+![](images/6.5.png)
+
+假设我们有一个酒店预订系统和一个 Reservation 对象模拟房间预订。这是个经典的情形要求我们必须依据对象的状态来适配对象的行为：
+
+1. 当预订被创建时，用户可以确认（confirm）预订；当然他们不可以取消（cancel），因为还没确认。但是他们可以删除（delete）预订。
+1. 一旦预订被确认，使用 confirm 函数将不会有任何意义；但是现在可以取消预订了，但不可以删除预订。
+1. 当预订日期前一天就不可以取消预订了。
+
+现在假设我们在一个巨大的对象中实现预订系统；我们已经使用了 if..else 和 switch 语句。
+
+在这种情况下，状态模式是完美的：这里将有三个策略，来实现描述的三个方法，每个实现只有一个行为对应着模式状态。通过使用这个模式，在 Reservation 对象中切换状态将非常简单；这将简单的激活不同的状态。
+
+上下文对象可以控制和初始化状态的变化。
+
+### 实现基本的故障安全套接字
+
+我们通过实例来学习状态模式。让我们构建一个客户端TCP套接字，当与服务器的连接丢失时不会失败；我们希望将服务器脱机期间发送的所有数据排队，然后在重新建立连接后再次尝试发送它。我们将在一个监控系统中利用这个套接字，一系列的机器会发送一些统计数据；如果服务器挂掉了，我们的套接字将在本地序列化数据直到服务器重新连接。
+
+````JavaScript
+//failsafeSocket.js
+const OfflineState = require('./offlineState');
+const OnlineState = require('./onlineState');
+
+class FailsafeSocket{
+  constructor (options) {                        //[1]
+    this.options = options;
+    this.queue = [];
+    this.currentState = null;
+    this.socket = null;
+    this.states = {
+      offline: new OfflineState(this),
+      online: new OnlineState(this)
+    };
+    this.changeState('offline');
+  }
+
+  changeState (state) {                          //[2]
+    console.log('Activating state: ' + state);
+    this.currentState = this.states[state];
+    this.currentState.activate();
+  }
+
+  send(data) {                                   //[3]
+    this.currentState.send(data);
+  }
+}
+
+module.exports = options => {
+  return new FailsafeSocket(options);
+};
+
+````
+
+1. 这个构造器初始化了很多数据结构，包括离线后的储存数据队列。而且还创建了两个状态。
+1. changeState 方法用于状态的转换。它简单地更新 currentState 实例变量并调用 activate 方法。
+1. send 方法，我们根据离线/在线状态有不同的行为。
+
+
+````JavaScript
+//offlineState.js
+
+const jot = require('json-over-tcp');         //[1]
+
+module.exports = class OfflineState {
+
+  constructor (failsafeSocket) {
+    this.failsafeSocket = failsafeSocket;
+  }
+
+  send(data) {                                //[2]
+    this.failsafeSocket.queue.push(data);
+  }
+
+  activate() {                                //[3]
+    const retry = () => {
+      setTimeout(() => this.activate(), 500);
+    }
+
+    this.failsafeSocket.socket = jot.connect(
+      this.failsafeSocket.options,
+      () => {
+        this.failsafeSocket.socket.removeListener('error', retry);
+        this.failsafeSocket.changeState('online');
+      }
+    );
+    this.failsafeSocket.socket.once('error', retry);
+  }
+};
+
+````
+
+1. 我们使用 josn-over-tcp 库来通过 TCP 发送 JSON 对象。
+1. send 方法来发送接收到的序列化数据。
+1. activate 方法尝试创建连接。
+
+
+````JavaScript
+//onlineState.js
+
+module.exports = class OnlineState {
+  constructor(failsafeSocket) {
+    this.failsafeSocket = failsafeSocket;
+  }
+
+  send(data) {                                 //[1]
+    this.failsafeSocket.socket.write(data);
+  };
+
+  activate() {                                 //[2]
+    this.failsafeSocket.queue.forEach(data => {
+      this.failsafeSocket.socket.write(data);
+    });
+    this.failsafeSocket.queue = [];
+
+    this.failsafeSocket.socket.once('error', () => {
+      this.failsafeSocket.changeState('offline');
+    });
+  }
+};
+````
+
+1. send 方法直接把数据写入套接字。
+1. activate 方法刷新套接字脱机时排队的所有数据，并且它也开始侦听任何错误事件;我们将此作为套接字脱机的症状（为简单起见）。发生这种情况时，我们会转换到离线状态
+
+````JavaScript
+
+//server.js
+const jot = require('json-over-tcp');
+const server = jot.createServer(5000);
+server.on('connection', socket => {
+  socket.on('data', data => {
+    console.log('Client data', data);
+  });
+});
+server.listen(5000, () => console.log('Started'));
+
+
+// client.js
+const createFailsafeSocket = require('./failsafeSocket');
+const failsafeSocket = createFailsafeSocket({port: 5000});
+
+setInterval(() => {
+  //send current memory usage
+  failsafeSocket.send(process.memoryUsage());
+}, 1000);
+
+````
+
+我们的服务器简单打印收到的 JSON，利用 FailsafeSocket 对象，我们的客户端每秒都会发送一次内存利用率测量。
+
+为了验证我们构建的小系统，我们应该在客户端和服务器端同时运行起来，然后通过暂停或重启服务器来测试 failsafeSocket 功能。我们应该看到客户端在 online 和 offline 切换，任何在服务器离线下的内存测量都会被收集到队列内然后在重新连接后发送到服务器。
+
+
+## 模版
+
+下一个模式我们来讨论模版模式，它与战略模式有很多共同之处。模板包括定义一个算法骨架的抽象伪类，其中的一些步骤未定义。子类可以填充算法上缺失的步骤，这些子类叫作模版方法。这种模式的目的是使定义一系列类的算法成为可能，这些类都是类似算法的变体。
+
+![](images/6.6.png)
+
+三个实体类拓展了模版并提供了 templateMethod 方法，这个方法是抽象或纯粹的虚拟；在 JavaScript 中这意味着方法没被定义或者被赋值给了一个需要实现的函数。模版模式比其它我们提到的模式更经典的面向对象，因为继承是它的核心实现。
+
+模版和策略的目的很相似，但是主要的不同点在于它们的结构和实现。它们都允许我们改变算法的部分重用相同的部分；但是，策略允许我们动态改变而且可能在运行时改变，而模版的算法是在实例被定义的时候决定的。在这样的假定下，模版模式可能更适合那些预先包装的算法变体。
+
+### 一个可配置的管理器模版
+
+为了比较策略和模版，我们再实现一个 Config 对象。
+
+````JavaScript
+// configTemplate.js
+const fs = require('fs');
+const objectPath = require('object-path');
+
+class ConfigTemplate {
+
+  read(file) {
+    console.log(`Deserializing from ${file}`);
+    this.data = this._deserialize(fs.readFileSync(file, 'utf-8'));
+  }
+
+  save(file) {
+    console.log(`Serializing to ${file}`);
+    fs.writeFileSync(file, this._serialize(this.data));
+  }
+
+  get(path) {
+    return objectPath.get(this.data, path);
+  }
+
+  set(path, value) {
+    return objectPath.set(this.data, path, value);
+  }
+
+  _serialize() {
+    throw new Error('_serialize() must be implemented');
+  }
+  _deserialize() {
+    throw new Error('_deserialize() must be implemented');
+  }
+}
+
+module.exports = ConfigTemplate;
+
+````
+
+新的 ConfigTemplate 类定义了两个模版方法：serialize、deserialize。下划线用于标示它们只在内部使用。
+
+````JavaScript
+const util = require('util');
+const ConfigTemplate = require('./configTemplate');
+
+class JsonConfig extends ConfigTemplate {
+
+  _deserialize(data) {
+    return JSON.parse(data);
+  };
+
+  _serialize(data) {
+    return JSON.stringify(data, null, '  ');
+  }
+}
+module.exports = JsonConfig;
+
+
+
+````
+
+JsonConfig 类继承自我们的模版，并对 serialize、deserialize 提供了具体实现。
+
+现在 JsonConfig 类可以用于独立的配置对象了。
+
+````JavaScript
+const JsonConfig = require('./jsonConfig');
+
+constjsonConfig = new JsonConfig();
+jsonConfig.read('samples/conf.json');
+jsonConfig.set('nodejs', 'design patterns');
+jsonConfig.save('samples/conf_mod.json');
+
+````
+
+### 真实情景
+
+这个模式对我们来说并不陌生，因为我们已经在第五章见识过了。我们实现了 write、read、transform、flush 方法。
+
+
+## 中间件
+
+在 Node.js 中最特别的模式绝对是中间件模式了。不幸的是，对于缺乏经验的人来说，这也是最令人困惑的一个，特别是对于来自企业编程世界的开发人员而言。迷失方向的原因可能与术语中间件的含义有关，中间件在企业架构行话中代表了各种软件套件，它们有助于抽象出低级机制，如 OS API，网络通信，内存管理等等，允许开发人员只关注应用程序的业务案例。在这种情况下，术语中间件回顾了诸如 CORBA，企业服务总线，Spring，JBoss 等主题，但在更通用的意义上，它还可以定义任何类型的软件层，它们就像是低级服务和应用程序之间的粘合剂（字面意思是中间的软件）。
+
+### Express 中的中间件
+
+Express 使中间件变得受欢迎，让它变成一个特殊的设计模式。在 Express 中，实际上中间件是一系列服务的呈现，特别是函数，函数被组织进管道中并负责处理 HTTP 请求的输入操作和相关响应
+。
+
+Express 作为一个以非常自以为是和极简主义的网络框架而闻名。使用中间件模式对开发者来说是一个有效的策略创建分发可被添加到当前应用的新的特性，而且不会破坏框架的极简核心。
+
+一个 Express 中间件是这样的：
+
+**function(req, res, next) { ...  }**
+
+在这，req 是 HTTP 的输入请求，res 是响应，next 是当前中间件完成任务时被调用的回掉。
+
+Express 中间件包含下面：
+
+* 解析请求体
+* 压缩/解压缩请求和响应
+* 产生日志
+* 管理 session
+* 管理加密 cookies
+* 提供跨站请求伪造保护
+
+如果我们考虑一下这个，这些功能都不严格和主要功能相关，也不是 web 服务器的核心部分；相反，它们是附件，组件为应用程序的其余部分提供支持，并允许实际请求处理程序仅关注其主要业务逻辑。本质上来说，那些任务是中间的软件。
+
+### 作为模式的中间件
+
+在 Express 中实现中间件不是什么新鲜事；
