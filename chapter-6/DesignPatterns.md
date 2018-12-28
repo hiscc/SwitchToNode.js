@@ -1212,4 +1212,273 @@ Express 中间件包含下面：
 
 ### 作为模式的中间件
 
-在 Express 中实现中间件不是什么新鲜事；
+在 Express 中实现中间件不是什么新鲜事；实际上它在 Node.js 中以拦截过滤器模式和职责链体现。更通用的说，它以一个处理管道流体现。现在在 Node.js 中，中间件这个词的使用远远超出了 Express 框架的界限，它表示一种特定模式，凭借一组处理单元，过滤器和处理程序以函数的形式连接以形成异步序列，以便执行任何类型数据的预处理和后处理。这个模式主要的优点是非常灵活；实际上，这个模式允许我们以极少的努力获得插件基础架构，为使用新的过滤器和处理程序扩展系统提供了一种方便的方式。
+
+![](images/6.7.png)
+
+这个模式的必要组件就是中间件管理器，它负责组织并执行中间件函数。最重要的实现如下：
+
+* 新的中间件可以以 use 函数调用。一般来说，新的中间件只能添加到管道后面，但也不一定。
+* 当新数据被接收处理时，异步序列执行流内注册的中间件将依次被调用。
+* 每一个中间件都可以通过不调用回掉或给回掉传入一个错误来决定是否继续处理数据。
+
+对于在管道内如何传递和处理数据也没有一定的规则。一些策略如下：
+
+* 通过额外的属性或者函数来加强数据
+* 通过一些处理来替换数据
+* 维持原数据并总是返回原数据的拷贝作为处理结果
+
+正确的实现依赖于中间件管理器的实现和中间件本身的处理类型。
+
+### 为 ØMQ 创建一个中间件框架
+
+我们通过为 ØMQ 创建一个中间件框架来演示中间件模式。ØMQ （也称 ZQM 或 ZeroMQ）使用了多样化的协议通过网络为原子消息提供了一个简单的接口；它的性能令人眼前一亮，其基本的抽象集合专门用于促进自定义消息传递体系结构的实现。因此 ØMQ 经常被用来构建复杂的分发系统。
+
+
+ØMQ 的接口十分底层；它只允许我们使用字符串或者二进制 buffer 的消息，所以任何编码或者自定义的数据格式必须由我们自己实现。
+
+在下一个例子中，我们将构建一个中间件基础架构来抽象传入 ØMQ 插口的预处理或后处理数据，然后我们就可以使用 JSON 对象了，而且还可以通过管道流来无缝压缩。
+
+#### 中间件管理器
+
+第一步我们需要在消息被接收时，围绕 ØMQ 创建一个启动中间件管道的管道。为此我们新建一个 zmqMiddlewareManager.js 文件：
+
+
+````JavaScript
+//zmqMiddlewareManager.js
+module.exports = class ZmqMiddlewareManager {
+  constructor(socket) {
+    this.socket = socket;
+    this.inboundMiddleware = [];                    //[1]
+    this.outboundMiddleware = [];
+    socket.on('message', message => {               //[2]
+      this.executeMiddleware(this.inboundMiddleware, {
+        data: message
+      });
+    });
+  }
+
+  send(data) {
+    constmessage = {
+      data: data
+    };
+
+    this.executeMiddleware(this.outboundMiddleware, message,
+      () => {
+        this.socket.send(message.data);
+      }
+    );
+  }
+
+  use(middleware) {
+    if (middleware.inbound) {
+          this.inboundMiddleware.push(middleware.inbound);
+        }
+        if (middleware.outbound) {
+          this.outboundMiddleware.unshift(middleware.outbound);
+        }
+      }
+
+  executeMiddleware(middleware, arg, finish) {
+    function iterator(index) {
+      if (index === middleware.length) {
+        return finish && finish();
+      }
+      middleware[index].call(this, arg, err => {
+        if (err) {
+          return console.log('There was an error: ' + err.message);
+        }
+        iterator.call(this, ++index);
+      });
+    }
+    iterator.call(this, 0);
+  }
+};
+
+````
+
+1. 首先创建两个包含我们中间件函数的空列表，一个是输入消息另一个为输出消息。
+1. 通过一个 message 事件，它会立即开始对插口内的新消息进行监听。在监听器内，我们通过执行 inboundMiddleware 管道来处理输入信息。
+
+send 方法会在新消息发到插口时启动中间件。
+
+消息通过在 outboundMiddleware 列表内的过滤器被处理，然后传给 socket.send 传输。
+
+use 方法用于把新的中间件函数压入到我们的管道中。每个中间件都成对压入；在我们的实现中，中间件拥有两个属性，inbound 和 outbound。
+
+值得注意的是，中间件会被压入到 inboundMiddleware 队列的后面，然后被压入到 outboundMiddleware 队列的前面。这是因为完整的 inbound/outbound 中间件函数通常需要以相反的顺序被执行。例如，如果我们想使用 JSON 来解压缩然后再反序列化一个输入消息，就意味着，在 outbound 中先反序列化再解压缩。
+
+
+最后的函数 executeMiddleware 是我们的核心函数，它负责执行中间件。这里的代码看起来很熟悉吧？因为这是一个异步序列遍历模式的简单实现。每一个在中间件队列内的函数将依次执行。这也是个从一个中间件传递属性给下一个的小技巧。最后 finish 回掉被调用。
+
+#### 支持 JSON 消息的中间件
+
+现在我们实现了中间件管理器，我们可以创建一对中间件来示范如何处理输入输出消息了。如我们前面讲的，我们的目标就是拥有一个序列化和反序列化 JSON 消息的过滤器，我们来创建 jsonMiddleware.js：
+
+
+````JavaScript
+//jsonMiddleware.js
+
+module.exports.json = () => {
+  return {
+    inbound: function (message, next) {
+      message.data = JSON.parse(message.data.toString());
+      next();
+    },
+    outbound: function (message, next) {
+      message.data = new Buffer(JSON.stringify(message.data));
+      next();
+    }
+  }
+};
+
+````
+
+我们的 json 中间件非常简单：
+
+* inbound 中间件反序列化接收到的消息，并把它赋值回 message 的 data 属性，这样后面管道就可以继续处理了
+* outbound 序列化 message.data
+
+请注意我们的中间件和 Express 内的中间件是不太一样的；这个事例展示了把中间件模式适配我们的指定的需求。
+
+#### 使用 ØMQ 中间件框架
+
+我们这就来使用我们刚创建的中间件基础设施。通过一个回定时发送 ping 到服务器的客户端和一个会返回接收消息的服务端来演示。
+
+从实现的视角来看，我们依赖 ØMQ 提供的 request/reply 消息模式。我们将用我们的 zmqMiddlewareManager 包装插口：
+
+##### 服务端
+
+````JavaScript
+//server.js
+
+const zmq = require('zmq');
+const ZmqMiddlewareManager = require('./zmqMiddlewareManager');
+const jsonMiddleware = require('./jsonMiddleware');
+const reply = zmq.socket('rep');
+reply.bind('tcp://127.0.0.1:5000');
+
+const zmqm = new ZmqMiddlewareManager(reply);
+zmqm.use(jsonMiddleware.json());
+
+
+zmqm.use({
+  inbound: function (message, next) {
+    console.log('Received: ', message.data);
+    if (message.data.action === 'ping') {
+      this.send({action: 'pong', echo: message.data.echo});
+    }
+    next();
+  }
+});
+
+
+````
+
+导入依赖并绑定一个本地的端口来开启服务，使用中间件。因为最后的中间件是在 zlib 和 json 中间件后定义的，我们可以显然可以通过 message.data 内的变量来使用解压缩和反序列化后消息。换句话说，任何传入 send 方法的数据将被 outbound 中间件来处理。
+
+
+##### 客户端
+
+````JavaScript
+//client.js
+
+const zmq = require('zmq');
+const ZmqMiddlewareManager = require('./zmqMiddlewareManager');
+const jsonMiddleware = require('./jsonMiddleware');
+
+const request = zmq.socket('req');
+request.connect('tcp://127.0.0.1:5000');
+
+const zmqm = new ZmqMiddlewareManager(request);
+zmqm.use(jsonMiddleware.json());
+
+
+zmqm.use({
+  inbound: function (message, next) {
+    console.log('Echoed back: ', message.data);
+    next();
+  }
+});
+
+
+setInterval( () => {
+  zmqm.send({action: 'ping', echo: Date.now()});
+}, 1000);
+
+
+
+
+````
+
+在处理代码内，我们简单拦截了 inbound 的响应并把它打印了出来。
+
+最后，我们设定一个计时器来发送 ping 给服务器。注意我们在 inbound 和 outbound 内都没有使用箭头函数，正如我们在第一章所学的，箭头函数会绑定 this 到它的词法作用域上，但是在箭头函数上使用 call 将不会改变它的内部作用域。换句话说，如果我们使用箭头函数的话，我们的中间件将不能识别 this 为 zmqMiddlewareManager 实例，而是会打印 “TypeError: this.send is not a function” 错误。
+
+分别启动服务： **node server  node client**
+
+### Koa generators 内的中间件
+
+在前面的章节内，我们看了怎么通过回掉和一个消息系统实现中间件模式。
+
+正如我们在介绍时所看到的那样，中间件模式在 Web 框架中真正发挥作用的是作为构建逻辑”层“的便捷机制，可以处理输入和输出，因为数据流遍了整个应用程序的核心。
+
+除了 Express 另一个严重使用中间件模式的框架就是 Koa 了。Koa 是个很有趣的框架，因为它是通过 ES2015 generator 函数实现中间件模式而非回掉。我们将在一瞬间看到这种选择如何大大简化了中间件的编写方式：
+
+![](images/6.8.png)
+
+在示意图中，我们有一个进来的请求，它在进入我们的 app 核心前经历了一系列中间件。这部分流被称为入站或下游。当流到达 app 的核心时，它会在此经历中间件，但是这次经历中间件的顺序会是相反的顺序。这允许中间件在执行应用程序的主要逻辑并且响应准备好发送给用户之后执行其他操作。 这部分流程称为出站或上游。
+
+由于中间件包裹应用的方式和洋葱相似，这被称之为 “切洋葱” 模型。
+
+现在我们来创建一个新的应用，看看如何为 Koa 写一个中间件。
+
+我们的 app 将是一个返回 JSON 数据的 API 服务。
+
+首先下载 Koa： **npm install koa**
+
+然后编写我们的 app.js：
+
+````JavaScript
+// app.js
+
+const app = require('koa')();
+
+app.use(function *(){
+  this.body = {"now": new Date()};
+});
+
+app.listen(3000);
+
+````
+
+值得注意的是我们的核心应用使用了生成器函数。我们将在一会看到中间件是如何被添加到应用中的。
+
+运行服务： **node app.js**
+
+当我们发送一个 JavaScript 对象时，Koa 小心的把响应转换成了 JSON 字符串然后添加了正确的 content-type 头。
+
+我们的 API 服务运行良好，但是我们现在决定保护一下它。为防止过量调用，我们限制了请求频率。这个逻辑在主要业务逻辑外，所以我们通过中间件来实现：
+
+
+````JavaScript
+//rateLimit.js
+
+const lastCall = new Map();
+
+module.exports = function *(next) {
+
+  // inbound
+  const now = new Date();
+  if (lastCall.has(this.ip) && now.getTime() -
+      lastCall.get(this.ip).getTime() < 1000) {
+     return this.status = 429; // Too Many Requests
+  }
+  yield next;
+
+  // outbound
+  lastCall.set(this.ip, now);
+  this.set('X-RateLimit-Reset', now.getTime() + 1000);
+}; 
+
+````
