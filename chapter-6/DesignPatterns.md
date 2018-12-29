@@ -1479,6 +1479,194 @@ module.exports = function *(next) {
   // outbound
   lastCall.set(this.ip, now);
   this.set('X-RateLimit-Reset', now.getTime() + 1000);
-}; 
+};
 
 ````
+
+第一个事就是我们使用了 Map 对象来储存我们最后接收到的 IP 地址。我们用 Map 对象来检查我们的服务是否调用超过限制。当然这只是个模型例子而不是理想的解决方案。在真实情景中，我们更倾向于使用额外的储存方式，例如 Redis、Memcache 等数据库。
+
+通过 yield next 调用，我们可以看到中间件的大体内容被分为两个逻辑部分， inbound 和 outbound。在 inbound 部分，我们还未触碰到应用核心，所以在这里我们检查了用户使用超过了我们的速率限制。如果超过了，我们简单地把响应设置为 429（请求太多）并返回。
+
+我们可以进入下一个中间件项目的另一种方法是调用 yield next。使用 generator 函数和 yield，中间件的执行将会被挂起直到执行完序列种所有的中间件后才会继续按队列反序执行挂起后的内容，直到第一个中间件再次被调用。
+
+当我们的中间件再次接收到控制时，我们储存了调用的时间戳并添加了 X-RateLimit-Reset 头给请求，来指示用户可以产生新的请求了。
+
+为了使用中间件，我们需要这样添加： **app.use(require('./reateLimit'));**
+
+现在我们的新 app 已经准备好了，重启服务打开浏览器。如果刷新频率过高就会返回 429 状态码。
+
+
+## 命令
+
+在 Node.js 中另一个非常重要的模式当属命令模式。在通常的定义里，我们可以认为命令是一个包含了所有必要信息在将来执行一个操作的对象。所以，我们不是直接调用一个方法或者函数，而是将创建一个包含操作意图或调用的对象。然后，另一个组件将负责实现意图，将其转化为实际行动。传统意义上，这个模式是围绕四个主要的组件构建而成：
+
+![](images/6.9.png)
+
+典型的命令模式是这样的：
+
+* Command：一个包含必要信息来调用方法或函数的对象。
+* Client：创建命令并提供给调用者。
+* Invoker：负责在目标 target 上调用执行命令。
+* Target（Receiver）：这是调用的主题。可能是个单函数或者包含方法的对象。
+
+如我们所见，这四个组件会因我们的实现模式而各异。
+
+使用命令模式而非直接执行操作有如下几个优点：
+
+* 可以安排命令在有执行。
+* 命令可以简单序列化并通过网络发送。这样我们就可以通过远程机器来分发任务了，从浏览器传送命令到服务器，创建 RPC 系统等等。
+* 命令可以保持历史。
+* 命令对一些数据算法的同步和冲突解决来说很重要。
+* 在还没执行前，命令是可以取消的。它也可以被撤销，重新使应用的状态回到以前的某一点上。
+* 可以将几个命令组合在一起。这可以用于创建原子事务或实现一种机制，从而一次执行组中的所有操作。
+* 可以对一组命令执行不同类型的转换，例如重复删除，连接和拆分。或者应用更多的算法，例如 Operational Transformation(OT)，这是当今大多数实时协作软件的基础，例如协作文本编辑。
+
+先前的清单清晰地为我们展示了这个模式的重要性，特别是在网络和异步执行的 Node.js 平台中。
+
+
+### 一个灵活的模式
+
+正如刚说的，命令模式可以以多种形式实现；我们这就来看看。
+
+#### 任务模式
+
+我们可以以一个最简单的实现开始：任务模式。在 JavaScript 中创建一个对象最简单的方式，就是闭包了：
+
+````JavaScript
+
+function createTask(target, args) {
+  return () => {
+    target.apply(null, args)
+  }
+}
+````
+
+这个例子有点眼熟；在第三章中我们已经多次使用过了这个模式了。这种技术允许我们使用一个单独的组件来控制和安排我们的任务的执行，这基本上等同于命令模式的调用者。例如，你还记得我们如何定义传入 async 库的任务吗？或者是使用 thunks 与 generator 混合的时候？回掉碑身也可以被认为是一个简化版的命令模式。
+
+#### 更复杂的命令
+
+我们来一个更复杂的命令；这次我们来支持撤销和序列化。
+
+````JavaScript
+const statusUpdateService = {
+  statusUpdates: {},
+  sendUpdate: function(status) {
+    console.log('Status sent: ' + status);
+    let id = Math.floor(Math.random() * 1000000);
+    statusUpdateService.statusUpdates[id] = status;
+    return id;
+  },
+
+  destroyUpdate: id => {
+    console.log('Status removed: ' + id);
+    delete statusUpdateService.statusUpdates[id];
+  }
+};
+
+
+function createSendStatusCmd(service, status) {
+  let postId = null;
+
+  const command = () => {
+    postId = service.sendUpdate(status);
+  };
+
+  command.undo = () => {
+    if(postId) {
+      service.destroyUpdate(postId);
+      postId = null;
+    }
+  };
+
+  command.serialize = () => {
+    return {type: 'status', action: 'post', status: status};
+  };
+
+  return command;
+}
+
+
+````
+
+前面的函数是一个产生新的 sendStatus 命令的工厂。每个命令实现以下三个功能：
+
+1. 命令本身也是一个函数，被调用时将触发一个动作；换句话说，它实现了任务模式。命令启动时将使用 target service 的方法来更新一个状态。
+1. undo 函数被附加到了主任务上。我们简单调用 destroyUpdate 方法。
+1. serialize 函数构建一个包含必要信息来重建同一个命令对象的 JSON 对象。
+
+
+
+然后我们构建一个调用者：
+
+````JavaScript
+class Invoker {
+
+  constructor() {
+    this.history = [];
+  }
+
+  run (cmd) {
+    this.history.push(cmd);
+    cmd();
+    console.log('Command executed', cmd.serialize());
+  }  
+
+  delay (cmd, delay) {
+    setTimeout(() => {
+      this.run(cmd);
+    }, delay)
+  }
+
+  undo () {
+    const cmd = this.history.pop();
+    cmd.undo();
+    console.log('Command undone', cmd.serialize());
+  }
+
+  runRemotely (cmd) {
+    request.post('http://localhost:3000/cmd',
+      {json: cmd.serialize()},
+        err => {
+          console.log('Command executed remotely', cmd.serialize());
+        }
+    );
+    }
+  }
+
+}
+
+
+````
+
+run 方法用于把命令保存进 history 实例变量中然后再触发命令本身。
+
+现在我们有了命令，调用者，和目标：
+
+**const invoker = new Invoker()**
+
+然后创建一个命令： **const command = createSendStatusCmd(statusUpdateService, 'HI')**
+
+然后执行： **invoker.run(command)**
+
+如果我们做错了，可以撤销： **invoker.undo()**
+
+也可以在一小时后再发送消息： **invoker.delay(command, 1000 * 60 * 60)**
+
+也可以远程执行： **invoker.runRemotely(command)**
+
+我们刚刚只是展示了命令模式的冰山一角。
+
+值得注意的是，一个完整版的命令模式只有在需要时才会用到。换句话说，我们一般会按需实现命令。
+
+
+## 总结
+
+在本章节，我们学习了一些可以运用到 JavaScript 的传统 GoF 设计模式，尤其是在 Node.js 哲学上。一些设计模式发生了转换，一些被简化了，其它语言吸收进行了重命名或适配。我们强调了一些简单的设计模式例如工厂是如何可以极大地提高代码的灵活性。其它如代理、装饰器、适配器也可以拓展适配到已存在的对象上。策略、状态和模版模式展示了如何一些大算法分割成静态和可变的部分，这样就提高了代码的重用性，拓展性。通过学习中间件模式，我们可以使用简单、可拓展、优雅的范例来处理数据了。最后命令模式为我们提供了一种使任何操作都变得灵活和强大的简单抽象方法。
+
+除了观察这些被广泛接受的设计模式的 JavaScript 转世之外，我们也发现了一些诞生于 JavaScript 社区的新模式。例如揭露构造器和可组合的工厂函数模式。这些模式帮助我们在 JavaScript 中解决特定的问题，例如异步性和基于原型的编程。
+
+最后，我们通过编写不同的可重用对象或函数，而不是扩展许多小类或者接口，获得了关于 JavaScript 如何完成工作和构建软件的更多证明。而且对于那些来自面向对象语言的开发者来说，一些设计模式在 JavaScript 内的实现显得又带你诡异；有些人可能会感到迷茫，知道可能不会只有一种，而是有很多不同的方式来实现设计模式。
+
+我们说 JavaScript 是一门务实的语言；它允许我们没有任何结构或指南来快速实现一些东西，而这也是这本书，尤其是这一章节变得很有用的原因。它试图在创造性和严格性间找到平衡。它不仅表明存在可以重用以改进我们的代码的模式，而且它们的实现也不是最重要的细节；模式间可能差异巨大甚至有重叠。真正重要的是蓝图，指南和模式基础上的思想。这是我们可以用有趣的方式设计更好的 Node.js 应用程序的真正可重用信息。
+
+在下一章节，我们将通过聚焦编程的某一方面来分析更多的设计模式：如何把模块连接组织起来。
