@@ -101,3 +101,124 @@ global.db = new Database('my-app-db')
 ````
 
 这将保证实例在整个应用内是唯一且共享，而不像是个包一样根据导入路径而无法保持状态。大多数情况下，我们不需要一个真正的单例，如果真的需要，我们将在后面看到另一个模式来在不同的包之间共享一个实例。
+
+## 连接模块的模式
+
+我们已经讨论了围绕依赖和耦合的一些基本思想，现在来进一步看一些实际的概念。在这部分，我们将呈现一个模块连接的主要模式。毫无疑问，通过有状态的实例来连接模块是应用中最重要的依赖。
+
+### 硬编码的依赖
+
+我们以分析两个模块间最常规的关系即硬编码依赖为开端。在 Node.js 中，通过 require 方法倒入一个模块时就是这种情况。这种方法创建的模块依赖简单有效，我们必须特别关注有状态实例的硬编码依赖关系。
+
+#### 使用硬编码依赖构建一个授权服务
+
+通过下面的图示来分析：
+
+![](images/6.10.png)
+
+这幅图显示了一种典型的层级架构；这就是一个简单的授权系统的结构。 AuthController 接收客户端的收入，在请求中获取到登录信息并进行一些初步验证。然后它依赖 AuthService 来检查这个用户是否和数据库内的用户匹配；这些查询依赖于 db 模块处理。这三个组件连接起来的方式将决定可重用性、可测试性和可维护性的程度。
+
+最自然的处理方式是在 AuthService 内导入 db 模块，然后在 AuthController 内导入 AuthService。这就是我们所讨论的硬编码。
+
+我们在系统中来展示一下我们刚刚讨论的实现，进而实现一个简单的授权服务：
+
+* POST '/login'：它接收一个包含 username 和 password 的 JSON 对象来授权。成功的话就返回一个 JSON Web Token(JWT)，它可以在请求时校验用户身份。
+* GET '/checkoutToken'：他将从 GET 请求内获取查询参数并对之校验。
+
+##### db 模块
+
+我们由底层开始构建我们的应用；首先我们需要暴露 levelUp 数据库实例。创建 lib/db.js:
+
+
+````JavaScript
+const level = require('level');
+const sublevel = require('level-sublevel');
+
+module.exports = sublevel(
+  level('example-db', {valueEncoding: 'json'})
+);
+````
+
+我们简单创建一个到 LevelDB 数据库的连接并储存在 ./example-db 目录下，然后使用 sublevel 插件对其进行装饰，它增加了对创建和查询数据库的不同部分的支持（可以将其与 SQL 表或 MongoDB 集合进行比较）。模块导出的对象是数据库句柄本身，它是一个有状态实例; 因此，我们正在创造一个单例。
+
+##### authService 模块
+
+既然我们拥有了 db 单例，我们可以用它来实现我们的 lib/authService.js 模块：
+
+````JavaScript
+// ...
+const db = require('./db');
+const users = db.sublevel('users');
+
+const tokenSecret = 'SHHH!';
+
+exports.login = (username, password, callback) => {
+  users.get(username, function(err, user) {
+      // ...
+    });
+  };
+
+exports.checkToken = (token, callback) => {
+  // ...
+  users.get(userData.username, function(err, user) {
+    // ...
+  });
+};
+
+````
+
+authService 模块实现了 login 服务和 checkToken 服务。我们将讨论 db 模块，db 变量包含了一个已经初始化的数据库句柄，我们可以直接在上面处理数据操作。
+
+##### AuthController 模块
+
+````JavaScript
+// lib/authController.js
+const authService = require('./authService');
+
+exports.login = (req, res, next) => {
+  authService.login(req.body.username, req.body.password,
+    (err, result) => {
+      // ...
+    }
+  );
+};
+
+exports.checkToken = (req, res, next) => {
+  authService.checkToken(req.query.token,
+    (err, result) => {
+      // ...
+    }
+  );
+};
+
+````
+
+authController 模块实现了两个路由来处理 HTTP 请求和响应。
+
+在这个模块内，我们依然硬编码了一个状态模块：authService。是的，authService 也成了一个状态模块因为它直接依赖于 db 模块。这样我们就理解了硬编码的依赖是如何在整个应用内传播的。
+
+##### app 模块
+
+````JavaScript
+//app.js
+
+const express = require('express');
+const bodyParser = require('body-parser');
+const errorHandler = require('errorhandler');
+const http = require('http');
+
+const authController = require('./lib/authController');
+const app = module.exports = express();
+app.use(bodyParser.json());
+
+app.post('/login', authController.login);
+app.get('/checkToken', authController.checkToken);
+
+app.use(errorHandler());
+http.createServer(app).listen(3000, () => {
+  console.log('Express server started');
+});
+
+````
+
+##### 启动服务
