@@ -222,3 +222,405 @@ http.createServer(app).listen(3000, () => {
 ````
 
 ##### 启动服务
+
+**node app**
+
+我们通过 curl 命令来调用我们的服务：
+
+**curl -X POST -d '{"username": "alice", "password":"secret"}' http://localhost:3000/login -H "Content-Type: application/json**
+
+上面的代码应该返回一个 token，然后我们把它放在下面的 <TOKEN HERE> 处：
+
+**curl -X GET -H "Accept: application/json" http://localhost:3000/checkToken?token=<TOKEN HERE>**
+
+然后会返回下面的字符串：
+
+**{"ok":"true","user":{"username":"alice"}}**
+
+##### 硬编码依赖的优缺点
+
+我们前面的例子展示了利用 Node.js 中的模块系统来管理在组件间的依赖的方便之处。我们从模块内暴露一个状态化的实例，让 Node.js 来管理它的生命周期，然后从应用的其它部分导入它。结果是一个直观的直观组织，易于理解和调试，每个模块初始化并连接自己，无需任何外部干预。
+
+换句话说，硬编码依赖限制了模块再次连接一个其它的实例，这将降低重用性和可测试性。例如，在组合内重用 authService 和其它数据库实例就不太可能了，因为这个硬编码依赖依赖的是同一个实例。而且独立测试 authService 的任务也是非常艰难的，因为我们不能简单模拟模块使用的数据库。
+
+作为最后一个考虑因素，重要的是要看到使用硬编码依赖项的大多数缺点都与有状态实例相关联。 这意味着如果我们使用 require 来加载无状态模块，例如工厂，构造函数或一组无状态函数，我们就不会遇到同样的问题。我们仍将与特定实现紧密耦合，但在 Node.js 中，这通常不会影响组件的可重用性，因为它不会引入与特定状态的耦合。
+
+### 依赖注入
+
+依赖注入（DI）模式也许是在软件设计中最被误解的概念。许多人将这个术语与框架和 DI 容器相关联，例如 Spring（用于 Java 和 C＃ ）或者 Pimple（用于 PHP ），但实际上它是一个更简单的概念。依赖注入模式背后的主要思想是由外部实体提供的组件的依赖关系。
+
+这个实体可以是一个客户端组件或一个集中连接所有模块的全局容器。这种实现的主要优势是可以提升解耦，尤其是在一些依赖状态实例的模块上。使用依赖注入，每一个依赖将不会被硬编码进模块，这个依赖来自外部。这意味我们可以配置模块使用任意依赖，因此就可以在不同的上下文中重用。
+
+为了演示这个模式，我们将使用依赖注入模式重构我们先前的授权服务。
+
+#### 使用 DI 重构授权服务
+
+通过 DI 来重构我们的模块，这其中有一个非常简单的窍门：我们将创建一个工厂，它将一组依赖项作为参数而不是将依赖项硬编码到有状态实例。
+
+以 lib/db.js 模块开始：
+
+
+````JavaScript
+// lib/db.js
+const level = require('level');
+const sublevel = require('level-sublevel');
+
+module.exports = dbName => {
+  return sublevel(
+    level(dbName, {valueEncoding: 'json'})
+  );
+};
+
+````
+
+首先我们通过把 db 模块转换成一个工厂函数为开端。现在我们可以创建任意数量的数据库了；这意味着整个模块将是可重用和无状态的了。
+
+然后构建 lib/authService.js：
+
+````JavaScript
+// lib/authService.js
+
+const jwt = require('jwt-simple');
+const bcrypt = require('bcrypt');
+
+module.exports = (db, tokenSecret) => {
+  const users = db.sublevel('users');
+  const authService = {};
+
+  authService.login = (username, password, callback) => {
+    //...same as in the previous version
+  };
+
+  authService.checkToken = (token, callback) => {
+    //...same as in the previous version
+  };
+
+  return authService;
+};
+
+````
+
+现在， authService 模块也是无状态的了；它不再导出特定的实例了，仅仅导出一个工厂函数。最重要的细节在于我们使得 db 依赖注入作为这个工厂函数的参数，移除了前面的硬编码依赖。这个简单的变化使得我们可以把它连接到任意数据库实例来创建新的 authService 模块。
+
+然后是 lib/authController.js 模块：
+
+````JavaScript
+// lib/authController.js
+module.exports = (authService) => {
+  const authController = {};
+
+  authController.login = (req, res, next) => {
+    //...same as in the previous version
+  };
+
+  authController.checkToken = (req, res, next) => {
+    //...same as in the previous version
+  };
+  return authController;
+};
+````
+
+authController 模块没有任何硬编码的依赖。
+
+剩下的就是 app.js 了：
+
+
+````JavaScript
+// app.js
+
+// ...
+const dbFactory = require('./lib/db');                        //[1]
+const authServiceFactory = require('./lib/authService');
+const authControllerFactory = require('./lib/authController');
+
+const db = dbFactory('example-db');                           //[2]
+const authService = authServiceFactory(db, 'SHHH!');
+const authController = authControllerFactory(authService);
+
+app.post('/login', authController.login);                     //[3]
+app.get('/checkToken', authController.checkToken);
+// ...
+
+
+````
+
+1. 首先导入我们的 services 工厂；这时它们还是无状态对象。
+1. 然后，通过导入的依赖实例化每一个 service。在这个阶段所有的模块被创建和连接。
+1. 最后，我们注册 authController 模块的路由。
+
+#### 不同类型的 DI
+
+我们上面实现的工厂注入是 DI 的一种，这里还有一些其它需要提及的事情：
+
+* 构造器注入：在这种类型的 DI 内，依赖在它被创建的时候传入构造器；可能是这样的：
+
+````JavaScript
+const service = new Service(dependencyA, dependencyB)
+````
+
+* 属性注入：在这种类型的 DI 内，依赖绑定到一个对象上：
+
+````JavaScript
+const service = new Service()
+service.dependencyA = anInstanceOfDependencyA
+````
+
+属性注入意味着对象在一个不一致的状态下被创建，因为它不连接自己的依赖，所以它的健壮性不高。但是在依赖间出现循环时可能很有用。例如，如果我们有两个组件 A 和 B ，这两个组件都使用工厂或着构造器注入，而且它们互相依赖。我们不能实例化它们其中任意一个，因为它们其中的一个已经被实例化创建。例子如下：
+
+````JavaScript
+function Afactory(b) {
+  return {
+    foo: function() {
+      b.say();
+    },
+    what: function() {
+      return 'Hello!';
+    }
+  }
+}
+
+function Bfactory(a) {
+  return {
+    a: a,
+    say: function() {
+      console.log('I say: ' + a.what);
+    }
+  }
+}
+
+````
+
+我们只能通过使用属性注入来解决这种僵局。例如，我们可以先创建 B 的实例，然后再实例化 A：
+
+````JavaScript
+const b = Bfactory(null)
+const a = Afactory(b)
+a.b = b
+````
+
+#### DI 的优缺点
+
+在使用 DI 实现的授权服务中，我们从依赖实例入手解耦各个模块。结果是我们可以单独重用我们的各个模块了。测试也方便多了。
+
+值得一提的是，我们把依赖的职责从底层切换到的顶层。高阶组件的重用性不如低阶组件，因为随着我们所在的层级越高，每个组件会变得更加具体。
+
+从这个假定出发，我们可以明白常规来说高阶组件拥有被反转的低阶依赖，所以低阶组件只依赖一个接口，因为依赖的定义和实现的所有权在高阶组件上。在我们的授权服务中，所有的依赖被一个顶级组件所实例化并连接起来，app 模块就是哪个顶级组件，这个顶级组件重用性不高，耦合性强。
+
+然而我们需要为解藕和可重用性方面的优势付出代价。一般来说，我们无法在编码时解决依赖关系，这使得理解系统各个组件之间的关系变得更加困难。而且，我们在 app 模块内实例化所有依赖时需要按照特定的顺序；我们不得不手动为整个应用构建依赖树。所以随着应用规模变大这将变得难以管理。
+
+一个可能的解决方案是在多个组件间分割依赖的所有权，而不是把它们集中在一个地方。这样可以大幅度降低依赖管理的复杂度，因为每个组件都拥有其特定的依赖。当然，我们也可以在必要的时候才使用 DI。
+
+我们将在下面的章节中看到如何在复杂架构中简化模块连接的解决方案，这种方案将使用一个 DI 容器来处理所有的依赖职责。
+
+使用 DI 增加了负责度和冗余性，但是依然有很多理由来使用它。我们有责任选择正确的方法，取决于我们想要获得的简单性和可重用性之间的平衡。
+
+### 服务定位器
+
+在前一章节我们学习了 DI 如何通过获取可重用和解藕的模块改变我们连接依赖的方式。另一个具有类似目的的模式就是服务定位器。它的核心原则就是具有一个在模块任何时候需要导入依赖的调解人并集中管理系统间的组件。我们的想法是向服务定位器询问依赖项而不是硬编码依赖。
+
+重要的是要理解通过使用服务定位器，我们引入了对它的依赖，因此我们将它连接到模块的方式决定了它们的耦合程度即可重用性。在 Node.js 中我们可以通过它们连接系统组件的方式来分出三种类型的服务定位器：
+
+* 在服务定位器上硬编码
+* 注入服务定位器
+* 全局服务定位器
+
+第一个对解藕最不利，因为它使用 require 包含了服务定位器直接的引用。在 Node.js 中，这被称为反模式，因为它引入了与组件的紧密耦合，据称可以提供更好的解藕。在这种情况下，服务定位器显然不会在可重用性方面提供任何价值，只会增加另一层次的间接性和复杂性。
+
+另一方面，一个注入服务定位器被一个组件通过 DI 引用。这样就可以很方便的一次注入整个依赖了。
+
+第三种被提及的服务定位器直接来自全局作用域。它有和硬编码服务定位器一样缺点，但是因为是全局的，它是个真正的单例因此也可以简单的在包之间共享实例。我们可以在接下来的例子中看到，但一般不使用全局服务定位器。
+
+#### 使用服务定位器重构授权服务
+
+我们将用注入的服务定位器来转换授权服务。第一步要实现服务定位器本身：
+
+````JavaScript
+//lib/serviceLocator.js
+
+module.exports = function() {
+  const dependencies = {};
+  const factories = {};
+  const serviceLocator = {};
+
+  serviceLocator.factory = (name, factory) => {     //[1]
+    factories[name] = factory;
+  };
+
+  serviceLocator.register = (name, instance) => {   //[2]
+    dependencies[name] = instance;
+  };
+
+  serviceLocator.get = (name) => {                  //[3]
+    if(!dependencies[name]) {
+      const factory = factories[name];
+      dependencies[name] = factory && factory(serviceLocator);
+      if(!dependencies[name]) {
+        throw new Error('Cannot find module: ' + name);
+      }
+    }
+    return dependencies[name];
+  };
+
+  return serviceLocator;
+}
+````
+
+我们的 serviceLocator 模块是一个返回有三个方法对象的工厂：
+
+* factory 将组件名称与工厂关联。
+* register 将组件名称直接与实例关联。
+* get 通过组件名称取回组件。如果一个实例已经可用，就简单返回它；相反，它会尝试调用注册的工厂来获取一个新实例。知道通过注入服务定位器当前的模块实例调用模块工厂很重要。这是模式的核心机制，允许我们的系统的依赖图自动和按需构建。
+
+````JavaScript
+//lib/db.js
+const level = require('level');
+const sublevel = require('level-sublevel');
+
+module.exports = (serviceLocator) => {
+  const dbName = serviceLocator.get('dbName');
+
+  return sublevel(
+    level(dbName, {valueEncoding: 'json'})
+  );
+}
+
+````
+
+db 模块使用服务定位器来接收输入并返回数据库的名称来实例化。一个值得提及的点是，服务定位器不仅可以返回组件实例而且也可以提供一个带参数的配置项。
+
+````JavaScript
+//lib/authService.js
+
+// ...
+module.exports = (serviceLocator) => {
+  const db = serviceLocator.get('db');
+  const tokenSecret = “serviceLocator.get('tokenSecret');
+
+  const users = db.sublevel('users');
+  const authService = {};
+
+  authService.login = (username, password, callback) => {
+    //...same as in the previous version
+  }
+
+  authService.checkToken = (token, callback) => {
+    //...same as in the previous version
+  }
+
+  return authService;
+};
+
+````
+
+authService 模块是一个以服务定位器作为输入的工厂。db 句柄和 tokenSecret 两个依赖通过 get 方法被返回。
+
+
+````JavaScript
+//lib/authController.js
+
+module.exports = (serviceLocator) => {
+  const authService = serviceLocator.get('authService');
+  const authController = {};
+
+  authController.login = (req, res, next) => {
+    //...same as in the previous version
+  };
+
+  authController.checkToken = (req, res, next) => {
+    //...same as in the previous version
+  };
+
+  return authController;
+}
+
+// app.js
+
+//...
+const svcLoc = require('./lib/serviceLocator')();      //[1]
+
+svcLoc.register('dbName', 'example-db');               //[2]
+svcLoc.register('tokenSecret', 'SHHH!');
+svcLoc.factory('db', require('./lib/db'));
+svcLoc.factory('authService', require('./lib/authService'));
+svcLoc.factory('authController', require('./lib/authController'));
+
+const authController = svcLoc.get('authController');   //[3]
+app.post('/login', authController.login);
+app.all('/checkToken', authController.checkToken);
+// ...
+
+````
+
+1. 我们通过调用工厂来实例化一个新的服务定位器
+1. 我们针对服务定位器注册配置参数和模块工厂。此刻，所有的依赖还未被实例化；我们只是注册了它们的工厂。
+1. 我们从服务定位器导入 authController；这会触发整个应用依赖树实例化。当我们实例化 authController 组件时，服务定位器通过注入自己来调用相关的工厂。然后 authController 工厂将尝试导入 authService 模块，这会返回 db 模块的实例。
+
+我们可以看到服务定位器惰性特性；每一个实例只有在需要时才会创建。另一个重要的实现是：每一个依赖不需要提前手动连接。优点是我们不必提前知道实例化和连接模块的顺序 -- 它们全部自动按需发生。相比简单的 DI 模式这样更加方便了。
+
+#### 服务定位器的优缺点
+
+服务定位器和依赖注入有很多相似点：它们都将依赖所有权转移到组件外部的实体。但我们连接服务定位器的方式决定了我们整个架构的灵活性。我们选择一个注入的服务定位器而不是硬编码或全局服务定位器来实现我们的示例并不是偶然的。这最后两个变种几乎抵消了这种模式的优势。实际上我们通过在服务定位器实例里面连接它们，而不是通过 require 导入依赖来连接组件。虽然硬编码的服务定位器更方便但就可重用性来说优势不大。
+
+当然，就像 DI 一样，使用一个服务定位器很难确定两个组件间的关系，因为它们在运行时才确定关系。还有，也很难确切知道哪个组件是被导入的。通过声明构造器参数或工厂中的依赖，在 DI 中表达会更清晰一点。但在服务定位器内需要代码审查器或一个确切的语句来解释组件的具体依赖。
+
+最后需要注意的是对于 DI 容器相比，服务定位器是一个不那么正确的实现，因为它共享了和服务注册相同的角色；但是，这里也有很大区别。在服务定位器中，每个组件知道自己明确的依赖；在 DI 容器中，组件对自己的容器一无所知。
+
+两种实现的不同点主要有以下几点：
+
+* 可重用性：依赖于服务定位器的组件重用性更低因为它依赖于服务定位器。
+* 可读性：服务定位器混淆了依赖。
+
+就可重用性来说，我们可以说服务定位器模式居于硬编码依赖和 DI 之间。就便捷性和简易性来说，它绝对比手动依赖好，因为我们不必手动控制整个依赖树。
+
+基于这些假定，就组件可重用性和便捷性来说，一个 DI 容器绝对提供了最好的平衡。我们这就来看看。
+
+### 依赖注入容器
+
+将服务定位器转换为依赖注入（DI）容器的步骤并不大，但正如我们已经提到的，它在解耦方面产生了巨大的差异。这个模式下，每个模块不必依赖于服务定位器，它可以简单地表达其对依赖性的需求，DI 容器将无缝地完成剩下的工作。对于这个容器最大的进步就是每个模块可以脱离模块进行重用。
+
+#### 为一个 DI 容器声明一系列依赖
+
+一个 DI 容器本质上是一个添加的新特性的服务定位器：在模块实例化前它可以识别模块的依赖。因此，一个模块必须以某种方法来声明它的依赖。
+
+首先，最流行的方式是注入一系列基于在工厂中使用的参数和构造器的依赖：
+
+
+
+````JavaScript
+//lib/authService.js
+
+module.exports = (db, tokenSecret) => {
+  //...
+}
+````
+
+正如我们定义的，这个模块将通过我们的 DI 容器传入的名称来实例化。但是为了从函数内读取到参数，我们有必要使用一点点技巧。在 JavaScript 中，我们可以通过序列化一个函数返回它的源码；使用 toString 方法就可以办到。
+
+这种方法的最大问题在于它不能很好地用于缩小，这种做法在客户端JavaScript中广泛使用，其中包括应用特定的代码转换以将源代码的大小减小到最小。许多缩小应用了一种称为名称修改的技术，它基本上重命名了一切局部变量以减少其长度，通常减少为单个字符。一个坏消息是函数参数是本地变量而且经常被其处理过程所影响，这会导致我们描述的声明依赖的机制失效。即使在服务端缩小不是必须的，但是考虑在浏览器内共享 Node.js 模块的代码也很重要。
+
+幸运的是，一个 DI 容器可能使用其它的的技术来获取注入的依赖。这些技术被列在下面：
+
+* 我们可以使用一个附在工厂函数上的特别属性，例如一个确切列出注入依赖的数组：
+
+````JavaScript
+
+module.exports = (a, b) => {}
+
+module.exports._inject = ['db', 'another/dependency']
+````
+
+* 我们可以指定一个依赖名称的数组：
+
+````JavaScript
+module.exports = ['db', 'another/dependency'， (a, b) => {}]
+````
+
+* 我们可以使用一个注释标记添加到每个函数内：
+
+````JavaScript
+module.exports = function(a /*db*/, b /*another/dependency*/) {}
+````
+
+这些技术都十分主观，所以我们使用其中最流行的实现：使用函数参数作为依赖名称。
+
+#### 通过 DI 容器来重构授权服务
