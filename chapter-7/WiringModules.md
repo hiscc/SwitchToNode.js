@@ -4,7 +4,7 @@ Node.js 的模块系统极大填充了 JavaScript 语言中的断层：缺乏原
 
 有时这种混乱导致在希望找到一种更熟悉的方式将我们的模块链接在一起时对单例模式绝望的追求。换句话说，这可能会过度随意使用依赖注入模式导入任何类型的依赖。模块的写法在 Node.js 中是最具有争议和主观性的话题。有许多思想流派影响着这个领域，但没有一个可以被视为拥有无可争议的真理。每一种实现都有其优缺点并且他们经常最终在同一个应用程序中混合在一起，改编，定制或以其他名称伪装使用。
 
-在本章，我们将分析各种把模块连接起来的实现。并比较它们的优缺点进而帮助我们在简约性、可重用性、拓展性方面进行权衡。
+在本章，我们将分析各种把模块连接起来的实现。并比较它们的优缺点进而帮助我们在简约性、可重用性、扩展性方面进行权衡。
 
 总的来说，我们将展示关于这个主题的几种最重要的模式：
 
@@ -19,7 +19,7 @@ Node.js 的模块系统极大填充了 JavaScript 语言中的断层：缺乏原
 
 ## 模块和依赖
 
-每一个现代化的应用总结起来就是一些模块的聚合产物，因为随着应用的增长，我们连接这些组件的方式变得异常重要。这不仅仅关系到技术方面，例如拓展性，而且也关系到整个系统的运行。纠结的依赖图是一种负担，它增加了项目的技术债；与此同时，任何代码的改变无论是修改或者拓展都将导致极大的副作用。
+每一个现代化的应用总结起来就是一些模块的聚合产物，因为随着应用的增长，我们连接这些组件的方式变得异常重要。这不仅仅关系到技术方面，例如扩展性，而且也关系到整个系统的运行。纠结的依赖图是一种负担，它增加了项目的技术债；与此同时，任何代码的改变无论是修改或者扩展都将导致极大的副作用。
 
 最糟糕的是，组件紧密地连接在一起，最后我们只能重构或完全重写这一部分。当然，这并不意味着我们必须从第一个模块就开始过度设计我们的设计，但从一开始就找到一个很好的平衡将产生深远的影响。
 
@@ -46,7 +46,7 @@ Node.js 提供了一个伟大的工具来组织连接模块。它就是 CommonJS
 * 内聚：衡量一个组件中功能间的相关性。例如，一个模块只做一件事，这就体现出了这个模块的搞内聚性。一个包含好几种保存对象到数据库的功能 -- saveProduct()、saveInvoice()、saveUser()，它的内聚性就很低。
 * 耦合：衡量一个模块依赖多少个其它模块。例如，当一个模块直接从另一个模块内读取数据时，我们说耦合很高。当然，如果两个模块通过全局或共享状态也是耦合很高。换句话说，两个模块只通过传递参数来交流的话就是松耦合。
 
-我们的目标是高内聚与松耦合，这样的模块会更易读，可用性更高也更容易拓展。
+我们的目标是高内聚与松耦合，这样的模块会更易读，可用性更高也更容易扩展。
 
 ### 有状态的模块
 
@@ -624,3 +624,485 @@ module.exports = function(a /*db*/, b /*another/dependency*/) {}
 这些技术都十分主观，所以我们使用其中最流行的实现：使用函数参数作为依赖名称。
 
 #### 通过 DI 容器来重构授权服务
+
+为了展示 DI 容器比服务定位器侵扰性更低，我们将基于原本的 DI 模式重新构建我们的授权服务。事实上，我们要做的就是保持应用程序的所有组件不受影响。除了app.js模块，它将成为负责初始化容器的模块。
+
+但是，首先我们需要实现我们的 DI 容器。我们创建一个 diContainer.js：
+
+````JavaScript
+// lib/diContainer.js
+
+const fnArgs= require('parse-fn-args');
+
+module.exports = function() {
+  const dependencies = {};
+  const factories = {};
+  const diContainer = {};
+
+  diContainer.factory = (name, factory) => {
+    factories[name] = factory;
+  };
+
+  diContainer.register = (name, dep) => {
+    dependencies[name] = dep;
+  };
+
+  diContainer.get = (name) => {
+    if(!dependencies[name]) {
+      const factory = factories[name];
+      dependencies[name] = factory &&
+          diContainer.inject(factory);
+      if(!dependencies[name]) {
+        throw new Error('Cannot find module: ' + name);
+      }
+    }
+    return dependencies[name];
+  };
+  //...to be continued
+
+````
+
+我们的 diContainer 模块和我们先前构建的服务定位器一样。值得注意的点有：
+
+* 我们导入了一个新的模块 [args-list](https://npmjs.org/package/args-list)，这个包会取得函数内参数名称。
+* 这次我们没有直接调用模块工厂，我们依赖 diContainer 模块的 inject 方法来解决模块依赖并调用工厂。
+
+我们来看下 diContainer.injdect 方法：
+
+````JavaScript
+diContainer.inject = (factory) => {
+  const args = fnArgs(factory)
+  .map(dependency => diContainer.get(dependency));
+    return factory.apply(null, args);
+  };
+
+}; //end of module.exports = function() {
+
+
+````
+
+这个方法不同于服务定位器内的方法，它的逻辑很直接：
+
+1. 我们使用 parse-fn-args 库获取到工厂函数的参数。
+1. 然后通过 map 方法取得每个实例的对应参数。
+1. 最后使用我们刚刚生成的依赖列表调用工厂函数。
+
+这就是我们 diContainer 做的，和服务定位器区别不大，但是通过注入它的依赖来简单实例化一个模块的这个步骤却产生了戏剧化的差异。
+
+````JavaScript
+// app.js
+
+const diContainer = require('./lib/diContainer')();
+
+diContainer.register('dbName', 'example-db');
+diContainer.register('tokenSecret', 'SHHH!');
+diContainer.factory('db', require('./lib/db'));
+diContainer.factory('authService', require('./lib/authService'));
+diContainer.factory('authController', require('./lib/authController'));
+
+const authController = diContainer.get('authController');
+
+app.post('/login', authController.login);
+app.get('/checkToken', authController.checkToken);
+// ...
+
+````
+
+app 模块内的代码和我们初始化服务定位器内的一样。
+
+#### DI 容器的优缺点
+
+一个 DI 容器假定了我们的模块使用了 DI 模式，因此继承了它的大部分优缺点。尤其是，我们提升了解藕性和特测试性，但是复杂度也随着上升，因为我们的依赖在运行时才被导入。一个 DI 容器也和服务定位器共享了很多属性，但它的另一面除了实际的依赖外，它不需要强制模块依赖任何额外的服务。这是个极大的优势，因为这样的话我们的每个模块可以在没有 DI 容器的情况下通过手动注入被使用了。
+
+这就是我们这部分展示的：授权服务在原生 DI 模式下，没有修改它的组件（除了 app.js）也岁每个依赖实现了注入。
+
+## 接连插件
+
+一个软件工程师梦想中的架构是拥有一个极简的核心并在需要的时候通过插件来扩展的架构。不幸的是，一般来说这不容易做到，因为大多数情况下实现这样的架构意味着事件、资源和复杂度的消耗。尽管如此，即使是被限制在系统的部分使用，我们还是希望会有一些所谓的外部扩展可以使用。在本节中，我们将进入这个迷人的世界，并专注于二元问题。
+
+* 暴露一个应用的服务给插件
+* 集成一个插件到父极应用
+
+### 作为包的插件
+
+通常在 Node.js 中应用的插件被以包的形式安装在 node_modules 文件夹中。这样做有两个优点。首先，我们可以使用 npm 发布并管理依赖。然后，一个包可以拥有自己私有的依赖树，这样可以避免依赖之间的冲突和矛盾。
+
+下面的文件夹结构就展示了两个作为包的插件：
+
+````JavaScript
+application
+  -- node_modules
+      |-- pluginA
+      |-- pluginB
+````
+
+在 Node.js 中这是个很常见的实践。
+
+但是使用包的好处不仅仅在于。实际上，一个流行的模式是通过包装它们组件到一个包内来构建整个应用，就像是它的内部插件一样。所以不是把模块组织进应用的主体包内，我们可以把功能分割成小块然后在每个小块内分别安装包。
+
+为何要使用这个模式呢？首先，方便：人们经常会发现在包的本地模块内通过相对路径来引用一个包很不现实。比如下面这样：
+
+````JavaScript
+application
+|-- componentA
+|   '-- subdir
+|       '-- moduleA
+'-- componentB
+    '-- moduleB
+
+````
+
+如果我们想从 moduleA 中查询 moduleB，我们必须这样：**require('../../componentB/moduleB')**
+
+实际上我们可以把整个 componentB 文件夹放到一个包内然后利用 require 算法。通过把它安装进 node_modules 文件夹内，我们可以这样： **reuire('componentB/module')**。
+
+把项目分离到包内的第二个原因在于，可重用性。一个包可以拥有其私有的依赖，这会强制开发者去思考哪些应该暴露给主要应用哪些应该保持私有。
+
+我们刚刚描述的用例使用的包不仅仅是一个无状态的，可重用的库（就像 npm 上的大多数包一样），而是更多地作为特定应用程序的一个组成部分，提供服务，扩展其功能，或者修改其行为。主要区别在于这些类型的软件包集成在应用程序中而不是仅仅被使用。
+
+我们现在遇到的问题是何时决定暴露部分主体应用给插件的这类架构。实际上，我们不能只考虑无状态插件，虽然它是一个完美的扩展方案，因为插件不得不使用父级应用的服务来完成任务。这方面依赖于父级应用连接模块的技术。
+
+### 扩展点
+
+这里有数不清的方式来扩展一个应用。例如使用我们前面提到了代理或者装饰器，这样可以改变或增强服务的功能；我们可以使用策略模式把一部分包装进算法；我们可以使用中间件在存在的管道内插入处理单元。而且由于它的可组合性，流可以提供极大的扩展性。
+
+还有 EventEmitter 允许我们使用事件和推/拉模式解藕我们的组件。另一个重要技术是在应用程序中明确定义可以附加的新功能或修改现有功能的一些点；这些在应用内的点被称为钩子。总而言之，支持插件的最重要的成分是一组扩展点。
+
+我们连接组件的方式起着决定性的作用，因为它影响着应用内服务是如何暴露给插件的。在这一部分我们将聚焦于这个方面。
+
+### 插件控制与应用程序控制的扩展
+
+在举例子前，了解我们将使用的技术背景很重要。这里有两类实现：
+
+* 明确的扩展
+* 通过控制反转的扩展
+
+在第一类扩展内我们拥有特定的组件明确扩展我们的基础架构。而在第二类中，基础架构将通过加载、安装或者启动一个新的组件来控制扩展。
+
+![](images/7.1.png)
+
+IoC 是一个非常广泛的原则，它不仅仅可以被运用在应用扩展问题上。事实上，从更一般的角度来看，可以说通过实施某种形式的 IoC，而不是控制基础设施的自定义代码，基础设施控制着自定义代码。 对于 IoC，应用程序的各个组件会牺牲其控制流的能力来换取更高水平的解耦。这也被称为好莱坞原则或者是 “don't call me, we'll call you”。
+
+例如，一个 DI 容器就是 IoC 原则应用在特定依赖管理器上的事例。观察者是 IoC 运用到状态管理器的事例。模版、策略、状态和中间件也是相同原则的本地化表现。浏览器在分发 UI 事件给 JavaScript 代码也实现了 IoC 原则。猜猜怎么着？ Node.js 本身在控制不同回掉的时候也遵循 IoC 原则。
+
+把这个概念运用到特定的插件上，就出现了两种扩展：
+
+* 插件控制的扩展
+* 应用控制的扩展（IoC）
+
+在第一个事例内，插件被集成进应用组件内按需扩展。而在第二个事例内，应用控制着插件，应用把插件集成到一个特定的扩展点上。
+
+一个快速实例就是，我们来看看一个扩展 EXpress 路由的插件。通过插件控制类的扩展，将是这样的：
+
+
+````JavaScript
+//in the application:
+const app = express();
+require('thePlugin')(app);
+
+//in the plugin:
+module.exports = function plugin(app) {
+  app.get('/newRoute', function(req, res) {...})
+};
+
+````
+
+如果我们使用应用控制的扩展（IoC）是这样的：
+
+````JavaScript
+//in the application:
+const app = express();
+const plugin = require('thePlugin')();
+app[plugin.method](plugin.route, plugin.handler);
+
+//in the plugin:
+module.exports = function plugin() {
+  return {
+    method: 'get',
+    route: '/newRoute',
+    handler: function(req, res) {...}
+  }
+}
+
+````
+
+在后面的示例内，可以看到插件是被动的；控制权在应用上，应用实现了插件的接收工作。
+
+基于前面的例子，我们可以迅速找出这两类插件的区别：
+
+* 插件控制的扩展更加灵活也更具弹性，因为我们可以在到达应用内部并自由使用插件。但是有时却会是相反的情况。实际上，应用程序的任何更改都会对插件产生更大的影响，需要不断更新，因为主应用程序在不断发展。
+* 应用程序控制的扩展依赖主应用程序中的插件基础结构。使用插件控制扩展，唯一的要求是应用程序的组件可以以某种方式扩展才行。
+* 使用插件控制的扩展，我们必须共享应用内部的服务（例如例子的 app 实例）；否则我们无法对其扩展。使用应用控制的扩展，也可能需要获取到应用的服务，我们不仅仅是用来扩展而且还要用来使用。例如我们需要 db 实例来进行查询或者利用主应用的日志打印。
+
+
+最后一点应该让我们考虑将应用程序的服务暴露给插件的重要性 -- 这是我们主要关注的问题。这样做的最好方法是展示插件控制扩展的实际示例，这需要在基础架构方面花费最少的工作量，我们可以更多地强调使用插件共享应用程序状态的问题。
+
+### 实现一个登出插件
+
+我们现在来为我们的授权服务实现一个简单的插件。基于我们的原本实现，我们需要使 token 无效即可实现登出；这很容易因为当 token 过期了就会失效。现在我们为这个功能增加一个支持，logout。我们不通过修改主应用的代码，我们把这个任务委托给插件。
+
+为了实现这个新功能，我们需要在 token 创建后并把它保存进数据库内，然后在我们需要验证的时候验证它是否还存在。使一个 token 失效，我们只需把它从数据库中移除。
+
+我们将使用插件控制的扩展来代理 authService.login 和 authService.checkToken 方法。我们需要用一个叫 logout 的新方法装饰 authService。我们需要注册一个新的路由端点来使 token 无效。
+
+步骤有如下四步：
+
+* 使用硬编码依赖
+* 使用依赖注入
+* 使用服务定位器
+* 使用 DI 容器
+
+#### 使用硬编码依赖
+
+我们现在要实现的插件的第一个变体涵盖了我们的应用程序主要使用硬编码依赖关系来连接其有状态模块的情况。如果我们的插件是在 node_modules 文件夹下，为了使用主应用的服务，我们必须可以获取到父级包。我们可以这样做：
+
+* 使用 require 并通过绝对或相对路径导航到应用的根。
+* 通过模拟父应用程序中的模块来使用 require -- 通常是实例化插件的模块。这样我们可以通过 require 来获取到应用的服务，就像是被应用调用的一样。
+
+相比来说，第一个实现的健壮性不强，因为它假设了包主导了主应用的位置。而模块模仿模式可以不管包在何处应用，基于这个理由，我们将使用第二技术来演示。
+
+我们需要在 node_modules 文件夹下创建一个新的包，取名 authsrv-plugin-logout。在我们开始前，我们需要一个 package.json 文件来描述一下我们的这个插件：
+
+
+````JavaScript
+// node_modules/authsrv-plugin-logout/package.json
+
+{
+  "name": "authsrv-plugin-logout",
+  "version": "0.0.0"
+}
+````
+
+现在我们来创建了插件的主模块，即 index.js 文件，这是 Node.js 尝试加载的默认包（如果 package.json 中无 main 属性的话）。通常初始化需要加载依赖：
+
+
+````JavaScript
+const parentRequire = module.parent.require;
+const authService = parentRequire('./lib/authService');
+const db = parentRequire('./lib/db');
+const app = parentRequire('./app');
+
+const tokensDb = db.sublevel('tokens');
+
+````
+
+第一行是关键。我们获取到了父级模块 require 函数的引用，父级模块指加载插件的模块。在我们的例子中， app 模块将是父级模块，这就意味这我们每次使用 parentRequire 就相当于我们在 app.js 中加载模块。
+
+下一步来为 authService.login 创建一个代理方法：
+
+````JavaScript
+const oldLogin = authService.login;                    //[1]
+authService.login = (username, password, callback) => {
+  oldLogin(username, password, (err, token) => {       //[2]
+    if(err) return callback(err);                      //[3]
+    tokensDb.put(token, {username: username}, () => {
+      callback(null, token);
+    });
+  });
+});
+}
+
+````
+
+1. 首先我们保存了 login 方法的引用便于重写。
+1. 在代理函数内，通过提供的自定义回掉调用原来的 login 方法，这样才可以拦截到原来的返回值。
+1. 如果原来的 login 返回一个错误，我们把它传递给回掉；否则，保存 token 到数据库内。
+
+相似的，我们需要拦截 checkToken 的调用并添加自己的逻辑：
+
+````JavaScript
+const oldCheckToken = authService.checkToken;
+
+authService.checkToken = (token, callback) => {
+  tokensDb.get(token, function(err, res) {
+    if(err) return callback(err);
+
+    oldCheckToken(token, callback);
+  });
+}
+
+authService.logout = (token, callback) => {
+  tokensDb.del(token, callback);
+}
+
+app.get('/logout', (req, res, next) => {
+  authService.logout(req.query.token, function() {
+    res.status(200).send({ok: true});
+  });
+});
+
+
+````
+
+这次，我们首先检查 token 是否存在于数据库内然后再把控制权交还给原来的 checkToken 方法。如果这个 token 不存在， get 操作将返回一个错误；这意味着我们的 token 已经失效。
+
+最后是 authService 的扩展，并用一个新方法来装饰它，使这个 token 失效。
+
+现在我们的插件已经准备好附加到主应用上了。编辑 app.js 模块：
+
+````JavaScript
+// app.js
+
+// ...
+let app = module.exports = express();
+app.use(bodyParser.json());
+
+require('authsrv-plugin-logout');
+
+app.post('/login', authController.login);
+app.all('/checkToken', authController.checkToken);
+// ...
+
+````
+
+我们需要引入插件来把它附加到主应用上。现在我们的授权服务也支持了验证 token。我们以一种可重用的方式对其进行实现。应用的核心部分依然保持原样。我们可以简单的运用代理和装饰器模式来扩展功能。
+
+现在我们尝试启动我们应用： **node app**。
+
+````JavaScript
+// 并对我们的新功能进行验证
+curl -X POST -d '{"username": "alice",“password":"secret"}' http://localhost:3000/login -H Content-Type: application/json
+
+
+// 然后检查 token
+
+curl -X GET -H "Accept: application/json" http://localhost:3000/checkToken?token=<TOKEN HERE>
+
+// 登出
+
+curl -X GET -H "Accept: application/json" http://localhost:3000/logout?token=<TOKEN HERE>
+````
+
+即使是这样的一个小插件，支持一个基于插件的扩展依然很明显。我们学习了如何利用模块模仿从另一个包中获取到主程序的服务。
+
+模块模仿是一种硬编码的依赖并且拥有和硬编码一样的优缺点。从另一方面说，它允许我们从主应用中获取任意的服务。但是它也创建了一个紧密的耦合，不仅与服务的特定实例耦合，而且与其位置有耦合，这将使插件在主应用程序中的更容易更改和重构。
+
+#### 使用服务定位器暴露服务
+
+和模块模仿类似，如果我们想暴露应用的所有组件给它的插件，服务定位器也是一个好选择。但是在这之上，它拥有一个极大的优点，就是一个插件可以以服务定位器的形式暴露自己的服务给应用甚至是暴露给其它插件。
+
+我们用服务定位器来重构一下我们的 logout 插件：
+
+````JavaScript
+// node_modules/authsrv-plugin-logout/index.js
+
+module.exports = (serviceLocator) => {
+  const authService = serviceLocator.get('authService');
+  const db = serviceLocator.get('db');
+  const app = serviceLocator.get('app');
+
+  const tokensDb = db.sublevel('tokens');
+
+  const oldLogin = authService.login;
+  authService.login = (username, password, callback) => {
+    //...same as in the previous version
+  }
+
+  const oldCheckToken = authService.checkToken;
+  authService.checkToken = (token, callback) => {
+    //...same as in the previous version
+  }
+  authService.logout = (token, callback) => {
+    //...same as in the previous version
+  }
+
+  app.get('/logout', (req, res, next) => {
+    //...same as in the previous version
+  });
+};
+
+````
+
+现在我们的插件以父级应用作为输入，它可以获取到任何需要的服务。这意味着应用不需要提前知道插件需要什么依赖；这是一个实现插件控制的扩展的极大优势。
+
+下一步就是在主应用中启动插件，修改 app.js 模块。我们将使用基于服务定位器模式的授权服务：
+
+````JavaScript
+// app.js
+
+// ...
+const svcLoc = require('./lib/serviceLocator')();
+svcLoc.register(...);
+// ...
+
+svcLoc.register('app', app);
+const plugin = require('authsrv-plugin-logout');
+plugin(svcLoc);
+
+````
+
+* 注册 app 模块给服务定位器，因为插件可能需要获取到 app。
+* 导入插件
+* 通过提供的服务定位器作为参数调用插件的主要函数
+
+正如我们先前说过的服务定位器的主要优点就是提供了一种简单的方式暴露出应用的所有服务给插件，但是也可以当作在插件和应用或插件间共享服务的机制。
+
+#### 使用 DI 暴露服务
+
+使用 DI 传递服务给插件很简单。如果 main 方法来连接父级应用的依赖，而且没有什么可以阻止我们在管理依赖时使用硬编码依赖或者是一个服务定位器，DI 模式几乎成为了必须使用 main 方法内的必需。当我们想要支持一个应用控制的扩展时，DI 也是一个理想的选择，因为它为共享插件提供了更好的控制。
+
+````JavaScript
+module.exports = (app, authService, db) => {
+  const tokensDb = db.sublevel('tokens');
+
+  const oldLogin = authService.login;
+  authService.login = (username, password, callback) => {
+    //...same as in the previous version
+  }
+
+  let oldCheckToken = authService.checkToken;
+  authService.checkToken = (token, callback) => {
+    //...same as in the previous version
+  }
+
+  authService.logout = (token, callback) => {
+    //...same as in the previous version
+  }
+
+  app.get('/logout', (req, res, next) => {
+    //...same as in the previous version
+  });
+};
+
+// app.js
+// ...
+const plugin = require('authsrv-plugin-logout');
+plugin(app, authService, authController, db);
+// ...
+
+
+````
+
+我们把插件包装到一个接收父级应用服务的工厂内；剩下的不变。然后修改 app.js 内的代码。
+
+DI 模式绝对是提供一系列服务给插件的最清晰的方式，更重要的是它还提供了对暴露出来的东西最高的控制权，更完善的信息隐藏。但是有时这也会被当作一项缺点，因为主应用不能经常知道插件需要哪个服务，所以我们注入了所有的服务，这是不现实的。由于这个原因，当我们主要想要支持插件控制扩展时，DI 不是理想的选择。但是使用 DI 容器可以简单地解决这个问题。
+
+#### 使用 DI 容器暴露服务
+
+在 app.js 内，我们可以这样实现：
+
+
+````JavaScript
+// ...
+const diContainer = require('./lib/diContainer')();
+diContainer.register(...);
+// ...
+//initialize the plugin
+diContainer.inject(require('authsrv-plugin-logout'));
+// ...
+
+````
+
+在注册或实例化我们的应用后，我们只需要实例化我们的插件。这样每个插件可以导入它自己的依赖而不需要父级应用知道。所有的连接再次被 DI 容器自动完成。
+
+使用 DI 容器也意味着每一个插件可以潜在地获取到应用的任意服务，这会降低信息的隐藏和扩展的使用。一个可能的解决方案是创建一个分离的 DI 容器注册我们想要暴露给插件的服务；这样，我们可以控制每一个插件在应用内的可见度。
+
+## 总结
+
+连接依赖在软件工程内是最具主观性的话题之一，但是在本章内，我们尽可能保持分析的真实性，以便客观地概述最重要的连接模式。我们澄清了在 Node.js 中关于单例和实例的一些普遍疑问，学习了如何使用硬编码、DI、服务定位器来连接依赖。我们使用了一个授权服务来实践了每一种技术，并探讨它们的优缺点。
+
+在本章的第二部分，我们学习了如何使应用支持插件，最重要的是如何把插件集成进应用中。我们运用了在第一部分内相同的技术并从另一个角度对其进行分析。我们发现一个插件从主应用中获取到正确的服务是多么重要，这会影响其能力。
+
+在本章的最后部分，我们应该在选择何种级别的解藕性、可重用性和精简性上感到得心应手。我们可以在应用中使用更多的模式。例如，我们可以使用硬编码作为主要技术，然后使用服务定位器连接插件；现在我们知道了每种方法的最佳用例，我们现在能做的事情确实没有限制。
+
+到目前为止，在本书中，我们将分析重点放在高度通用和可定制的模式上，但从下一章开始，我们将把注意力转移到解决更具体的技术问题上。接下来的内容实际上是一系列的窍门，可用于解决与 CPU 绑定任务相关的具体问题，异步缓存以及与浏览器共享代码。
