@@ -173,3 +173,169 @@ window.addEventListener('load', function(){
 });
 
 ````
+
+我们导入 sayHello 模块，然后安装 **npm install mustache**
+
+现在我们来启动： **webpack main.js bundle.js**
+
+这个指令将编译 main 模块并打包所有需要的依赖到一个 bundle.js 文件，在浏览器中引入这个文件。
+
+我们创建一个 HTML 文件测试一下：
+
+````HTML
+<html>
+  <head>
+    <title>Webpack magic</title>
+    <script src="bundle.js"></script>
+  </head>
+    <body>
+    </body>
+</html>
+
+````
+
+#### 使用 WebPack 的优势
+
+WebPack 的神奇之处不仅仅如此。它还有很多特性。
+
+* WebPack 自动提供了许多兼容浏览器的 Node.js 核心模块。这意味着我们可以在浏览器内使用像 http、assert、events 等等模块。
+* 如果我们有一个与浏览器不兼容的模块，我们可以将其从构建中排除，或者将其替换为空对象或替换为另一个提供替代和浏览器兼容实现的模块。这是一个至关重要的功能，我们将有机会在我们即将看到的示例中使用它。
+* WebPack 可以为不同的模块生成打包文件。
+* WebPack 允许我们使用像加载器或插件对源文件执行额外的操作。这里有一堆我们需要的插件和加载器。
+* WebPack 允许我们管理预处理所有的资源，包括 JavaScript、图片、字体、模版。
+* 我们可以配置 WebPack 来分割依赖树并组织它到不同的块中。
+
+WebPack 的灵活的配置使很多开发者开始使用它来管理客户端代码。这也让很多客户端的库开始支持 CommonJS 和 npm，开创了一个全新的局面。例如，我们可以这样安装 jQuery： **npm install jquery**。
+
+然后在我们的项目内导入： **const $ = require('jquery')**
+
+你讲对已有如此多的客户端库支持了 CommonJS 感到惊讶不已。
+
+#### 使用 WebPack 和 ES2015
+
+正如我们在前一段说的，WebPack 一个主要的优势就是可以使用加载器和插件在打包前对源代码进行转换。
+
+这本树我们已经使用了 ES2015 标准的很多新特性，我们将继续在通用 JavaScript 应用中继续使用。在这一部分，我们将看看利用 WebPack 的加载器来重写我们使用 ES2015 的模块。假如适当的配置，WebPack 将把 ES2015 编译为浏览器支持 ES5 语言。
+
+首先，我们把我们的模块移动到 src 文件夹下。这将让我们更加易于组织我们的代码。
+
+现在，我们重写我们的模块。 我们 ES2015 版本的 src/sayHello.js 如下：
+
+````JavaScript
+
+const mustache = require('mustache');
+const template = '<h1>Hello <i>{{name}}</i></h1>';
+mustache.parse(template);
+module.exports.sayHello = toWhom => {
+  return mustache.render(template, {name: toWhom});
+};
+
+````
+
+注意我们使用了 const、let 和箭头函数语法。
+
+我们可以更新我们的 src/main.js 文件到 ES2015。如下：
+
+````JavaScript
+
+window.addEventListener('load', () => {
+  const sayHello = require('./sayHello').sayHello;
+  const hello = sayHello('Browser!');
+  const body = document.getElementsByTagName("body")[0];
+  body.innerHTML = hello;
+});
+
+````
+
+如何配置 webpack.config.js：
+
+````JavaScript
+const path = require('path');
+
+module.exports = {
+  entry:  path.join(__dirname, "src", "main.js"),
+  output: {
+    path: path.join(__dirname, "dist"),
+    filename: "bundle.js"
+  },
+  module: {
+    loaders: [
+      {
+        test: path.join(__dirname, "src"),
+        loader: 'babel-loader',
+        query: {
+          presets: ['es2015']
+        }
+      }
+    ]
+  }
+};
+
+````
+
+这个文件暴露一个 WebPack 可读取的配置对象。
+
+在这个配置对象内，我们定义了一个 entry 作为 src/mian.js 文件的端点，并设置打包文件为 dist/bundle.js。
+
+现在我们来看看加载器数组。这个可选的数组允许我们指定一系列可以改变源代码的加载器。每个加载器都是一个特定的转换器（例如使用 babel-loader 将 ES2015 转换为 ES5），然后只在当前的文件匹配特定的 test 时才起效。在这个例子中，我们告诉 WebPack 对所有 src 文件夹下的文件使用 babel-loader。
+
+现在我们执行 WebPack 操作 **npm install babel-core babel-loader babel-preset-es2015**， **webpack**
+
+记住在 magic.html 中引用 dist/bundle.js 文件。
+
+
+### 跨平台开发基础
+
+当我们为不同的平台开发时，遇到的最普遍的问题就是我们不得不面对基于特定的平台提供一个方案的实现了。我们将探索一些面对这些问题时使用的原则和模式。
+
+#### 代码运行时分支
+
+一个最简单最易见的例子就是基于不同的主机平台来提供不同的实现。这要求我们有一种识别出运行时的主机平台的机制，然后通过 if...else 语句动态实现切换。一些通用的实现涉及到检查全局变量。例如，我们可以检查全局 window 是否存在：
+
+````JavaScript
+if(typeof window !== "undefined" && window.document) {
+  //client side code
+  console.log('Hey browser!');
+} else {
+  //Node.js code
+  console.log('Hey Node.js!');
+}
+
+````
+
+使用一个运行时分支实现在 Node.js 和浏览器定义间切换是最简单最易见的模式；但是也有一些不便之处：
+
+* 对这两个平台的代码被包含到相同的模块所以也被放入到最后的打包文件内，因此一些不用的代码会增加打包文件的体积。
+* 如果大面积使用，这将降低代码可读性，因为业务逻辑将被和跨平台逻辑相混合。
+* 依赖于平台使用动态的分支来导入不同的模块将导致所有的模块都被添加到最后的打包文件内。例如，如果我们考虑一下下一个代码片段，clientModule 和 serverModule 将被包含到打包文件中，除非我们在构建时明确地排除它们：
+
+````JavaScript
+if(typeof window !== "undefined" && window.document) {
+         require('clientModule');
+       } else {
+         require('serverModule');
+       }
+
+````
+
+最后一个不便之处在于打包文件在构建时无法知道运行时变量的值（除非这个变量是一直不变的），所以它们将打包所有模块无论是否会被用到。
+
+这最后一个属性的结果是动态使用变量所需的模块不包含在打包文件中。例如，对于下面的代码，没有模块将被打包：
+
+````JavaScript
+moduleList.forEach(function(module) {
+  require(module)
+})
+````
+
+值得注意的是 WebPack 克服了一些限制，在确定的环境下，它可以猜出变量所有可能的值。如果你有这样一段代码：
+
+````JavaScript
+function getController(controllerName) {
+  return require("./controller/" + controllerName);
+}
+````
+
+它将导入所有在 controller 文件夹下的模块变量。
+
+#### 构建时代码分支
