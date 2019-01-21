@@ -339,3 +339,146 @@ function getController(controllerName) {
 它将导入所有在 controller 文件夹下的模块变量。
 
 #### 构建时代码分支
+
+在这一部分我们将看看如何使用 WebPack 来移除不需要的文件。这样我们就有了更加轻量的打包文件并且避免了意外暴露出属于服务端的敏感代码。
+
+WebPack 还支持插件，这些插件允许我们扩展我们的打包文件处理。去执行一个构建时代码分支，我们可以使用一个两个内建插件： DefinePlugin 和 UglifyJsPlugin。
+
+DefinePlugin 可以帮助我们用自定义代码或变量替代一些代码。而且，UglifyJsPlugin 允许我们压缩我们的代码并移除未使用的语句。
+
+我们在 mian.js 中实现：
+
+````JavaScript
+//main.js
+
+if (typeof __BROWSER__ !== "undefined") {
+  console.log('Hey browser!');
+} else {
+  console.log('Hey Node.js!');
+}
+
+//webpack.config.js
+const path = require('path');
+const webpack = require('webpack');
+
+const definePlugin = new webpack.DefinePlugin({
+  "__BROWSER__": "true"
+});
+const uglifyJsPlugin = new webpack.optimize.UglifyJsPlugin({
+  beautify: true,
+  dead_code: true
+});
+
+module.exports = {
+  entry:  path.join(__dirname, "src", "main.js"),
+  output: {
+    path: path.join(__dirname, "dist"),
+    filename: "bundle.js"
+  },
+  plugins: [definePlugin, uglifyJsPlugin]
+};
+
+````
+
+DefinePlugin 插件允许我们用动态代码或常量值对特定的代码进行替换。我们把 __BROWSER__ 替换为 true。
+
+第二个插件用于混淆和最小化打包文件内的 JavaScript 代码。 dead_code 选项用于移除所有没有用到的代码。
+
+
+````JavaScript
+//mian.js
+if (true) {
+  console.log('Hey browser!');
+} else {
+  console.log('Hey Node.js!');
+}
+
+console.log('Hey browser!')
+````
+
+现在我们的 mian.js 文件就是这样的了。beautify：true 选项用于避免移除所有的空格。
+
+#### 模块交换
+
+大多数时间，我们已经知道在构建时包含哪些代码了。这意味着我们可以在构建时对一个模块进行替换。这养就会生成更轻量的打包文件了，因为我们排除了不需要的模块。
+
+我们将构建一个暴露函数 alert 的模块。我们将有两种不同的实现，一个是服务器端一个用于浏览器端：
+
+````JavaScript
+//alertServer.js
+module.exports = console.log
+
+//alertBrowser.js
+module.exports = alert
+````
+
+代码很简单。如你所见，我们仅仅是使用了默认的函数。他们都接受一个字符串作为参数。
+
+现在在写我们的通用 main.js 文件：
+
+````JavaScript
+//main.js
+const alert = require('./alertServer');
+alert('Morning comes whether you set the alarm or not!');
+
+````
+
+然后配置：
+
+````JavaScript
+//webpack.config.js
+const path = require('path');
+const webpack = require('webpack');
+
+const moduleReplacementPlugin =
+  new webpack.NormalModuleReplacementPlugin(/alertServer.js$/,
+    './alertBrowser.js');
+
+module.exports = {
+  entry:  path.join(__dirname, "src", "main.js"),
+  output: {
+    path: path.join(__dirname, "dist"),
+    filename: "bundle.js"
+  },
+  plugins: [moduleReplacementPlugin]
+};
+
+````
+
+我们使用 NormalModuleReplacementPlugin 插件，第一个参数是一个正则表达式。第二个参数是资源路径。在构建时，如果一个资源被匹配到，它将被第二个参数里的文件替代。
+
+在我们的事例中， alertBrowser 将替代 alertServer 模块。
+
+我们也可以用 npm 上的库进行替换，比如用 toastr 替换浏览器原生的 alert。
+
+**npm install jQuery toastr**
+
+现在我们可以使用 toastr 重写我们的 alertBrowser 模块。
+
+````JavaScript
+const toastr = require('toastr')
+module.exports = toastr.info
+````
+
+toastr.info 函数接收一个字符串作为参数，并在浏览器的右上方展示一个信息框。
+
+我们的 WebPack 配置文件依然不变，但是这次它将自动解决新的依赖树，包括 jQuery 和 toastr。
+
+还有，服务器端版本的 main.js 文件依然不变。
+
+由于 WebPack 和模块替换插件，我们可以在不同平台间更容易处理这些问题。我们可以聚焦在基于平台的模块，然后使用模块替换插件并打包到一起。
+
+
+#### 跨平台开发的设计模式
+
+既然我们知道了如何在 Node.js 和浏览器代码之间进行切换，剩下就是如何集成我们的设计模式了，如何创建一个部分组件可以变换的组件。
+
+* 策略和模版：这两个模式可能是在浏览器内共享代码最有用的模式了。他们的目的是定义一个通用的算法，并允许其中的部分可以变换，而这正是我们需要的！在跨平台开发中，这些模式允许我们共享组件中平台无关的部分，同时对哪些基于平台的部分使用不同的策略或者模版进行更改。
+* 适配器：这个模式可能在我们替换整个组件时很有用。
+* 代理：当代码想同时运行在两个平台上时。远程代理模式正好派上用场：想象一下如果我们像在浏览器端获取到 fs 对象的情况。我们就可以在客户端创建一个 fs 对象并代理服务器端 fs 模块的所有请求，使用 Ajax 或者 Web Socket 来交换命令或者返回值。
+* 观察者：观察者在组件间分发接收事件时提供了天然的抽象。在跨平台开发中，这意味着我们可以用浏览器特定的实现代替发射体，而不改变监听器，反之亦然。
+* DI 和 服务定位器：这两个模式都可以用在注入的模块实现上。
+
+正如我们所看到的，我们掌握的模式库非常强大，但最强大的武器仍然是开发人员选择最佳方法并使其适应手头的具体问题的能力。 在下一节中，我们将把我们学到的东西付诸实践，利用我们目前所见的一些概念和模式。
+
+## React 介绍
