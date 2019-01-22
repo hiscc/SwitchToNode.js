@@ -482,3 +482,923 @@ toastr.info 函数接收一个字符串作为参数，并在浏览器的右上�
 正如我们所看到的，我们掌握的模式库非常强大，但最强大的武器仍然是开发人员选择最佳方法并使其适应手头的具体问题的能力。 在下一节中，我们将把我们学到的东西付诸实践，利用我们目前所见的一些概念和模式。
 
 ## React 介绍
+
+从这一章开始，我们将使用 React。React 提供了一个专注于组件概念的视图抽象，其中组件可以是按钮，表单输入，简单容器（如 HTML div）或用户界面中的任何其他元素。这样你就可以通过定义组合高可复用组件来构建用户界面。
+
+React 相比于其它视图实现的差别在于它没有绑定 DOM。实际上，它提供了一种叫蓄奴 DOM 的更高级抽象，非常适合网络，但也可用于其他环境，例如，构建移动应用程序，建模3D环境，甚至定义硬件组件之间的交互。
+
+用 React 开发通用 JavaScript 的主要原因是它可以使用相同的代码在服务器端和客户端运行。使用 React，我们能够呈现显示用户直接从 Node.js 服务器请求的页面所需的所有 HTML 代码，然后当页面加载时，直接在浏览器呈现。这允许我们构建单页面应用（SPAs），单页面应用指整个页面的部分才会刷新。同时，用户可以直接从服务端加载页面。
+
+由于 React 高效的优化算法，DOM 更新都是批量智能的。这样浏览器的渲染会非常迅速。
+
+### React 第一个组件
+
+首先安装依赖：
+
+**npm install webpack babel-core babel-loader babel-preset-es2015**
+
+**npm install react react-dom babel-preset-react**
+
+然后是我们第一个组件：
+
+````JavaScript
+//src/joyceBooks.js
+const React = require('react');
+
+const books = [
+  'Dubliners',
+  'A Portrait of the Artist as a Young Man',
+  'Exiles and poetry',
+  'Ulysses',
+  'Finnegans Wake'
+];
+
+class JoyceBooks extends React.Component {
+  render() {
+    return (
+      <div>
+        <h2>James Joyces major works</h2>
+        <ul className="books">{
+          books.map((book, index) =>
+            <li className="book" key={index}>{book}</li>
+          )
+        }</ul>
+      </div>
+    );
+  }
+}
+
+module.exports = JoyceBooks;
+
+````
+
+定义 React 组件需要从 React.Component 扩展一个类。这个类必须定义一个 render 方法。render 方法内包装的是 JSX。
+
+### JSX 是什么？
+
+正如我们说的，React 为虚拟 DOM 提供了一个高级 API。DOM 是一个很棒的概念而且易于呈现，但是我们用一些像节点、父级、子极的底层概念来动态操作 DOM 渲染，这样可能会变得非常笨重。所有为了降低操作 DOM 的复杂度，React 引入 JSX 作为处理虚拟 DOM 的中间格式。
+
+实际上，JSX 本身不是一门语言，它是 JavaScript 的超集，它可以编译成可运行的 JavaScript。但是，它对基于 XML 的语法开发者有很大的优势。当我们在浏览器内开发时，JSX 被用于描述 HTML 同时定义我们的组件，所以 JSX 可以看作是对 JavaScript 的增强。
+
+这种方法提供了一个内在优势，也就是说，我们的 HTML 代码现在在构建时动态验证，如果我们忘记，闭合一个标签，我们将提前得到错误。
+
+我们来分析一下 render 方法内的代码：
+
+````JavaScript
+render() {
+  return (
+    <div>
+      <h2>James Joyces major works</h2>
+      <ul className="books">{
+        books.map((book, index) =>
+          <li className="book" key={index}>{book}</li>
+        )
+      }</ul>
+    </div>
+  );
+}
+
+````
+
+我们在 JSX 内写了一些 HTML 代码而且没有什么特别的指引或者包装。这里我们简单定义了一个 div 标签作为组件的容器。
+
+我们也可以在 HTML 块内放置一些 JavaScript 逻辑代码；注意在 ul 中的大括号内容。这样允许我们在 HTML 中做一些模版引擎才能完成的任务。我们使用了 map 函数来便利所有的 books，并为每个 book 创建一个 li。
+
+在开发 React 时，你不必强制使用 JSX。JSX 仅仅是 React 虚拟 DOM 库上的一个很棒的接口而已。我们还可以直接定义我们的代码：
+
+````JavaScript
+function render() {
+  return React.createElement(
+    'div',
+    null,
+    React.createElement(
+      'h2',
+      null,
+      'James Joyce's major works
+    ),
+    React.createElement(
+      'ul',
+      { className: 'books' },
+      books.map(function (book) {
+        return React.createElement(
+          'li',
+          { className: 'book' },
+           book
+        );
+      })
+    )
+  );
+}
+
+````
+
+直接这样写的话可读性会差一些，而且更容易出现错误，所以大多数情况下我们使用 JSX 然后把它编译成 JavaScript 代码。
+
+下面就是编译 JSX 后的的内容：
+
+````HTML
+<div data-reactroot="">
+  <h2>James Joyce's major works</h2>
+    <ul class="books">
+      <li class="book">Dubliners</li>
+      <li class="book">A Portrait of the Artist as a Young Man</li>
+      <li class="book">Exiles and poetry</li>
+      <li class="book">Ulysses</li>
+      <li class="book">Finnegans Wake</li>
+    </ul>
+</div>
+````
+
+### 配置 WebPack 编译 JSX
+
+我们配置 WebPack 编译 JSX 到 JavaScript：
+
+````JavaScript
+
+const path = require('path');
+module.exports = {
+  entry:  path.join(__dirname, "src", "main.js"),
+  output: {
+    path: path.join(__dirname, "dist"),
+    filename: "bundle.js"
+  },
+  module: {
+    loaders: [
+      {
+        test: path.join(__dirname, "src"),
+        loader: 'babel-loader',
+        query: {
+        cacheDirectory: 'babel_cache',
+        presets: ['es2015', 'react']
+       }
+     }
+   ]
+ }
+};  
+
+````
+
+* 我们使用 react Babel 预设。
+* 开启 cacheDirectory 选项。这样选项允许 Babel 使用特定的文件夹作为缓存文件夹，就可以更快速的编译打包了。这不是必须的但强烈推荐开启。
+
+### 在浏览器内渲染
+
+我们创建 src/main.js：
+
+````JavaScript
+const React = require('react');
+const ReactDOM = require('react-dom');
+const JoyceBooks = require('./joyceBooks');
+
+window.onload = () => {
+  ReactDOM.render(<JoyceBooks/>, document.getElementById('main'))
+};
+
+````
+
+ReactDOM.render 函数以 React 组件和一个 DOM 节点为参数。而且我们传入的 React 组件是一个自定义标签（JoyceBooks），我们每次导入的组件都会是一个新实例。
+
+现在构建我们的 HTMl 页面：
+
+````HTML
+<!-- index.html -->
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>React Example - James Joyce books</title>
+  </head>
+  <body>
+    <div id="main"></div>
+    <script src="dist/bundle.js"></script>
+  </body>
+</html>
+
+````
+
+我们引入打包文件到原生 HTMl 页面内，并创建了一个 id 为 main 的 div作为组件的容器。
+
+客户端渲染时发生一下的事件：
+
+1. 浏览器下载 HTMl 代码并渲染。
+1. 下载打包文件并解析 JavaScript 内容。
+1. 解析后的代码生成真正的 DOM 内容。
+
+这也意味着如果浏览器禁用了 JavaScript ，页面将是一片空白。这可能成为一个严重的问题，尤其对 SEO 来说。
+
+### React 路由库
+
+在这一部分内，我们将构建一个简单路由的应用。首先下载安装 React 路由库。这个路由库使在组件间的路由更加简单。
+
+**npm install react-router**
+
+然后我们创建我们的所有组件：
+
+````JavaScript
+//src/components/authorsIndex.js
+const React = require('react');
+const Link = require('react-router').Link;
+
+const authors = [
+  {id: 1, name: 'James Joyce', slug: 'joyce'},
+  {id: 2, name: 'Herbert George Wells', slug: 'h-g-wells'}
+];
+
+class AuthorsIndex extends React.Component {  
+  render() {
+    return (
+      <div>
+        <h1>List of authors</h1>
+        <ul>{
+          authors.map( author =>
+            <li key={author.id}><Link to={`/author/${author.slug}`}>  
+                    {author.name}</Link></li>
+          )
+        }</ul>
+      </div>
+    )
+  }
+}
+
+module.exports = AuthorsIndex;
+
+//components/joyceBooks.js
+
+const React = require('react');
+const Link = require('react-router').Link;
+
+const books = [
+  'Dubliners',
+  'A Portrait of the Artist as a Young Man',
+  'Exiles and poetry',
+  'Ulysses',
+  'Finnegans Wake'
+];
+
+class JoyceBooks extends React.Component {
+  render() {
+    return (
+      <div>
+        <h2>James Joyces major works</h2>
+          <ul className="books">{
+            books.map( (book, key) =>
+              <li key={key} className="book">{book}</li>
+            )
+          }</ul>
+          <Link to="/">Go back to index</Link>
+        </div>
+      );
+    }
+  }
+
+  module.exports = JoyceBooks;
+
+//compoenents/wellsBooks.js
+const React = require('react');
+const Link = require('react-router').Link;
+
+const books = [
+  'The Time Machine',
+  'The War of the Worlds',
+  'The First Men in the Moon',
+  'The Invisible Man'
+  ];
+
+class WellsBooks extends React.Component {
+  render() {
+    return (
+      <div>
+        <h2>Herbert George Wellss major works</h2>
+        <ul className="books">{
+          books.map( (book, key) =>
+            <li key={key} className="book">{book}</li>
+          )
+        }</ul>
+        <Link to="/">Go back to index</Link>
+      </div>
+    );
+  }
+}
+
+module.exports = WellsBooks;
+
+````
+
+我们引入了一个新的 Link 组件，这个组件来自 React Router 库。它允许我们创建一个用于导航的可点击的链接。它其中的 to 属性定义了一个相对 URI 来指示到一个特殊的视图。就像 HTML 中的 a 标签一样，但不一样的是点击 Link 标签后整个页面不会发生跳转。React Router 将基于 URI 动态刷新需要刷新的部分。我们将看到这个机制是如何影响我们配置路由的。
+
+````JavaScript
+//routes.js
+
+const React = require('react');
+const ReactRouter = require('react-router');
+const Router = ReactRouter.Router;
+const Route = ReactRouter.Route;
+const hashHistory = ReactRouter.hashHistory;
+const AuthorsIndex = require('./components/authorsIndex');
+const JoyceBooks = require('./components/joyceBooks');
+const WellsBooks = require('./components/wellsBooks');
+const NotFound = require('./components/notFound');
+
+class Routes extends React.Component {
+  render() {
+    return (
+      <Router history={hashHistory}>
+        <Route path="/" component={AuthorsIndex}/>
+        <Route path="/author/joyce" component={JoyceBooks}/>
+        <Route path="/author/h-g-wells" component={WellsBooks}/>
+        <Route path="*" component={NotFound} />
+      </Router>
+    )
+  }
+}  
+module.exports = Routes;
+
+````
+
+我们在这里首先引入了 react-router，它包含了我们需要的 Router、Route、hashHistory。
+
+Router 是我们的路由配置的主要模块。它是我们 Routes 组件的根元素。history 属指定了 URL 更新的规则。这里有两种 URl 策略： hashHistory 和 browserHistory。第一种是 URL 片段更新。使用这种策略，我们的链接是带 # 符号的：index.html#/author/h-g-wells。而第二种策略是基于 HTML5 的 history API 来现实 URLs 的。这种策略下的 URI 是类似这样的： http://example.com/author/h-g-wells。
+
+在本例中，我们使用 hashHistory 策略，因为它是最简单的策略并且也不需要 web 服务器来刷新页面。我们在稍后将使用 browserHistory 策略。
+
+Route 组件允许我们在 path 和 component 之间定义一个关联。当路由匹配时这个组件会被渲染。
+
+在 render 函数内，我们总结组合这些概念。
+
+* Router 组件就像一个容器；它不渲染任何 HTML 代码仅仅是包装着一系列 Route 定义。
+* 每个 Route 定义关联着一个组件。当这个组件的路由被匹配时，组件被渲染。
+* 对于给定的 URI，只能匹配一条路由。在模棱两可的情况下，路由器更喜欢确切点的路由（匹配 /authod/joyce 而不是 /author）。
+* 你可以通过 * 来捕获所有路由，在前面所有的路由没有被匹配时，它将被匹配。这里我们使用我们的 “not found” 组件。
+* 现在更新我们的 main.js 文件：
+
+
+````JavaScript
+//main.js
+const React = require('react');
+const ReactDOM = require('react-dom');
+const Routes = require('./routes');
+window.onload = () => {
+  ReactDOM.render(<Routes/>, document.getElementById('main'))
+};
+
+````
+
+现在启动 WebPack 生成打包文件并打开 index.html 查看效果。
+
+React Router 是一个很给力的组件，它拥有很多有趣的特性。例如，它允许你嵌套路由。
+
+## 创建一个通用的 JavaScript 应用
+
+我们已经拥有了把我们的简单 app 转换为一个通用的 JavaScript 应用的所有基础。我们认识了 WebPack、ReactJs 并分析了大部分在不同平台间统一代码的模式。
+
+在本节中，我们将通过创建可重用组件，添加通用路由和渲染以及最终通用数据检索来不断改进我们的示例。
+
+### 创建可重用组件
+
+在前面的例子中，我们创建了两个非常相似的组件：JoyceBooks 和 WellsBooks。这两个组件基本相同；唯一的差别就是使用了不同的数据。在本节，我们将创建更通用的组件并更新我们的路由。
+
+我们来创建一个 components/authorPage.js 组件：
+
+
+````JavaScript
+//components/authorPage.js
+
+const React = require('react');
+const Link = require('react-router').Link;
+const AUTHORS = require('../authors');
+
+class AuthorPage extends React.Component {
+  render() {
+    const author = AUTHORS[this.props.params.id];
+    return (
+      <div>
+        <h2>{author.name}s major works</h2>
+        <ul className="books">{
+          author.books.map( (book, key) =>
+            <li key={key} className="book">{book}</li>
+          )
+        }</ul>
+        <Link to="/">Go back to index</Link>
+     </div>
+    );
+  }
+}
+module.exports = AuthorPage;
+
+````
+
+这个组件和我们想要替换的组件很像，我们需要在组件内部接收不同的数据来展示。
+
+为了简化，我们在这里导入 authors.js，这个文件导出了我们所需的数据。变量 this.props.params.id 是每个展示 author 的标识。这个参数被路由所填充。现在我们填充我们的 authors.js：
+
+````JavaScript
+//authors.js
+module.exports = {
+
+  'joyce': {
+    'name': 'James Joyce',
+    'books': [
+      'Dubliners',
+      'A Portrait of the Artist as a Young Man',
+      'Exiles and poetry',
+      'Ulysses',
+      'Finnegans Wake'
+    ]
+  },
+
+   'h-g-wells': {
+    'name': 'Herbert George Wells',
+    'books': [
+      'The Time Machine',
+      'The War of the Worlds',
+      'The First Men in the Moon',
+      'The Invisible Man'
+    ]
+  }
+};
+
+//routes.js
+const React = require('react');
+const ReactRouter = require('react-router');
+const Router = ReactRouter.Router;
+const hashHistory = ReactRouter.hashHistory;
+const AuthorsIndex = require('./components/authorsIndex');
+const AuthorPage = require('./components/authorPage');
+const NotFound = require('./components/notFound');
+
+const routesConfig = [
+  {path: '/', component: AuthorsIndex},
+  {path: '/author/:id', component: AuthorPage},
+  {path: '*', component: NotFound}
+];
+
+class Routes extends React.Component {
+  render() {
+    return<Router history={hashHistory} routes={routesConfig}/>;
+  }
+}
+module.exports = Routes;
+
+````
+
+这次我们使用新的 AuthorPage 组件，我们没有是有 Route 组件而是使用一个 JavaScript 原生数组来定义我们的路由并传入 routes 特性中。这种配置与基于标签的路由配置是一样的。其他时候，例如当我们有许多嵌套路由时，可能更适合使用基于标签的配置。一个重要的变化是我们新的 /author/:id 路由，这个路由链接到了我们新的组件。带参数的路由将匹配 /author/joyce 和 /author/h-g-wells。
+
+### 服务端渲染
+
+我们继续我们的通用 JavaScript 之路。我们说 React 一个最有趣的特性是它可以在服务端渲染组件。我们将在这部分利用这个特性来更新我们的 app 并且直接在服务端渲染。
+
+我们将使用 Express 作为 web 服务器，ejs 作为内部模版引擎。我们将基于 Babel 使用 JSX，首先我们需要安装新依赖：
+
+**npm install express ejs babel-cli**
+
+我们所有的组件依然和前面的相同。在服务端，我们将需要获取到路由配置，为了简化，我们将从 routes.js 中取出配置并放置到 routesConfig.js 文件中：
+
+
+````JavaScript
+//routesConfig.js
+
+const AuthorsIndex = require('./components/authorsIndex');
+const AuthorPage = require('./components/authorPage');
+const NotFound = require('./components/notFound');
+
+const routesConfig = [
+  {path: '/', component: AuthorsIndex},
+  {path: '/author/:id', component: AuthorPage},
+  {path: '*', component: NotFound}
+];
+module.exports = routesConfig;
+
+//view/index.ejs
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>React Example - Authors archive</title>
+  </head>
+  <body>
+    <div id="main">
+      <%- markup -%>
+    </div>
+    <!--<script src="dist/bundle.js"></script>-->
+  </body>
+</html>
+
+````
+
+* <%- markup -%>  部分将动态被 React 内容替换掉，React 的内容将在服务端先渲染然后在发送到浏览器。
+* 我们现在包含了打包文件，因为在本节中我们只想关注服务器端呈现。在下一部分我们将集成一个完整的通用渲染方案。
+* 现在来创建我们的 server.js：
+
+````JavaScript
+//server.js
+const http = require('http');
+const Express = require('express');
+const React = require('react');
+const ReactDom = require('react-dom/server');
+const Router = require('react-router');
+const routesConfig = require('./src/routesConfig');
+
+const app = new Express();
+const server = new http.Server(app);
+
+     app.set('view engine', 'ejs');
+
+      app.get('*', (req, res) => {
+      Router.match(
+        {routes: routesConfig, location: req.url},
+        (error, redirectLocation, renderProps) => {
+          if (error) {
+            res.status(500).send(error.message)
+          } else if (redirectLocation) {
+            res.redirect(302, redirectLocation.pathname +       
+              redirectLocation.search)
+          } else if (renderProps) {
+            const markup = ReactDom.renderToString(<Router.RouterContext
+                         {...renderProps} />);
+            res.render('index', {markup});
+          } else {
+            res.status(404).send('Not found')
+          }
+        }
+      );
+      });
+
+      server.listen(3000, (err) => {
+      if (err) {
+        return console.error(err);
+      }
+      console.info('Server running on http://localhost:3000');
+      });
+
+````
+
+这段配置的重点在 **app.get('*', (req, res) => {...})**。这是个抓取所有 get 请求 的 Express 路由。在这个路由内，我们对路由逻辑进行了代理。
+
+为了适配 React Router，我们使用了 Router.match 函数，这个函数接收一个路由配置对象和一个回掉函数作为参数。配置对象有两个键：
+
+* routes：这个传入一个路由数组，然后我们配置了一个常用于客户端渲染的额外参数。
+* location：这个用于指定当前请求的 URL。
+
+回掉在路由匹配时执行。接收三个参数：
+
+* error 参数用于产生错误时对错误作处理。
+* redirectLocation 参数用于重定向路由，这里我们就需要创建一个重定向信息告诉浏览器进行重定向。
+* renderProps 参数用于路由被匹配时渲染相应的组件。参数 renderProps 是一个包含去渲染组件数据的对象。这个是服务端渲染的核心机制，我们使用 ReactDom.renderToString 函数来渲染 HTML 代码。然后，我们注入最终的 HTML 到 index.ejs 模版中。
+* 最后当路由没有被匹配时，简单返回 404 not found 给浏览器。
+
+
+````JavaScript
+const markup = ReactDom.renderToString(<Router.RouterContext {...renderProps} />
+````JavaScript
+
+所以这是最重要的一部分，我们来看看这个函数是如何运行的：
+
+* 这个函数来自 react-dom/server，这个函数可以渲染任何 React 组件成一个字符串。它通常用于在服务端渲染 HTMl 代码并立即发送到浏览器，加速页面载入提高 SEO 性能。React 很智能因为在我们调用 ReactDOM.render 方法渲染同一个组件时，它将不会重新渲染，它会为已存在的组件附加一个事件监听器。
+* 我们渲染的 RouterContext 组件，用于渲染对应路由的组件树。我们为这个组件传入一系列属性。为了扩展这个对象我们使用了基于 JSX 的展开特性操作符，它将取出组件特性内的所有键值对。
+
+现在启动我们的 server.js： **node server**
+
+记住我们没有开启包括打包文件，所以我们没有任何客户端的 JavaScript 代码，每一个交互都会重新请求服务器。
+
+在下一部分，我们将看看如何开启客户端和服务端渲染，为我们的 app 添加一个有效的通用路由和渲染方案。
+
+### 通用渲染和路由
+
+在本段中，我们将利用服务端和客户端渲染和路由更新我们的应用。
+
+第一件事就是解除 views/index.ejs 中 bundle.js 的注释。
+
+然后，我们需要在客户端 main.js 文件中改变历史策略。我们以前使用的 hashHistory 策略不能很好支持通用渲染，因为我们不得不在客户端和服务端采取一致的 URLs。在服务端内，我们智能使用浏览器历史策略，所以重写 routes.js 模块：
+
+````JavaScript
+//routes.js
+
+const React = require('react');
+const ReactRouter = require('react-router');
+const Router = ReactRouter.Router;
+const browserHistory = ReactRouter.browserHistory;
+const routesConfig = require('./routesConfig');
+
+class Routes extends React.Component {
+  render() {
+    return<Router history={browserHistory} routes={routesConfig}/>;
+  }
+}
+module.exports = Routes;
+
+````
+
+如你所见我们只变化了 ReactRouter.browserHistory 函数并把它传入到我们的 Router 组件内。
+
+接近成功； 我们需要在服务器应用程序中执行一项小的更改，以便能够将 bundle.js 文件作为静态资源从我们的服务器提供给客户端。
+
+我们使用 Express.static 中间件暴露我们的文件作为静态文件：
+
+**app.use('/dist', Express.static('dist'))**
+
+### 通用数据检索
+
+我们的应用基本完成了但还有一个基础点就是我们使用了静态的 JSON 对象作为我们的数据来源。随着应用扩张我们需要耦合更低可伸缩的数据方案。
+
+在这部分，我们将构建一个允许我们异步获取数据的 REST API 服务。
+
+#### API 服务
+
+我们需要一个完全分离的 API 服务，构建一个 apiServer.js：
+
+````JavaScript
+//apiServer.js
+const http = require('http');
+const Express = require('express');
+const app = new Express();
+const server = new http.Server(app);
+const AUTHORS = require('./src/authors');               // [1]
+
+app.use((req, res, next) => {                           // [2]
+  console.log(`Received request: ${req.method} ${req.url} from
+    ${req.headers['user-agent']}`);
+  next();
+});
+
+app.get('/authors', (req, res, next) => {               // [3]
+  const data = Object.keys(AUTHORS).map(id => {
+    return {
+      'id': id,
+      'name': AUTHORS[id].name
+    };
+  });
+
+  res.json(data);
+});
+
+app.get('/authors/:id', (req, res, next) => {           // [4]
+  if (!AUTHORS.hasOwnProperty(req.params.id)) {
+    return next();
+  }
+  const data = AUTHORS[req.params.id];
+  res.json(data);
+});
+
+server.listen(3001, (err) => {
+  if (err) {
+    return console.error(err);
+  }
+  console.info('API Server running on http://localhost:3001');
+});
+
+
+````
+
+* 我们的数据依然存放在一个 JSON 文件内。当然我们简化了我们的例子，但是在真实情景下，这里是个真正的数据库。像 MongoDB、MySql 或者 LevelDB。在这个例子中，我们将直接从 JSON 对象内获取数据。
+* 我们使用了一个打印信息的中间件。
+* 我们通过 /authors 暴露一个 GET 端点，返回一个 JSON 数组。对于每一个 author 我们暴露给 id 和 name 字段。
+* 我们也通过 URI 的 /authors/:id 路由暴露GET 端点。
+
+启动服务： **node apiServer**
+
+现在我们的服务可以在 http://localhost:3001 来访问到，这样使用：
+
+
+````JavaScript
+curl http://localhost:3001/authors/
+[{"id":"joyce","name":"James Joyce"},
+{"id":"h-g-wells","name":"Herbert George Wells"}]
+
+curl http://localhost:3001/authors/h-g-wells
+{"name":"Herbert George Wells","books":["The Time Machine","The War of the Worlds","The First Men in the Moon","The Invisible Man"]}
+````
+
+#### 从前端代理请求
+
+这个 API 应该让前端和后端都能访问到。前端通过 AJAX 请求访问，你可能已经知道了浏览器只能对同一个域下的 URLs 进行 JJAX 请求。这意味着我们的 API 服务运行在 localhost：3001 而我们的 web 服务运行在 localhost：3000。我们现在使用了两个不同的域，所以浏览器无法使用 AJAX 请求。为了克服这个限制，我们可以在我们的 web 服务器内创建一个代理，暴露出和浏览器同样的域：
+
+![](images/8.1.png)
+
+为了在 web 服务上构建一个代理组件，我们将使用 [http-proxy](https://npmjs.com/package/http-proxy)，所以先安装： **npm install http-proxy**。
+
+#### 通用 API 客户端
+
+我们将基于当前环境为 API 配置两个不同的前缀：
+
+* http://localhost:3001 当我们从 web 服务调用 API 时使用。
+* /api 当我们从浏览器内调用 API 时使用。
+
+我们可应该考虑到浏览器只使用 XHR/AJAX 机制来处理异步请求，所以我们需要像 request 或内建的 http 库。
+
+为了克服这些问题我们使用 [axios](https://npmjs.com/package/axios)。这个库可以在服务端和客户端使用，在两个平台内进行了抽象最后形成了一个统一的 API。
+
+安装 axios： **npm install axios**
+
+然后，我们需要创建一个简单的包装模块，暴露一个 axios 实例：
+
+````JavaScript
+//xhrClient.js
+const Axios = require('axios');
+
+const baseURL = typeof window !== 'undefined' ? '/api' :
+  'http://localhost:3001';
+const xhrClient = Axios.create({baseURL});
+module.exports = xhrClient;
+
+````
+
+在这个模块内，我们检查了 window 是否存在，进而探测出在哪个平台。简单暴露出 axios 的一个新实例。
+
+#### 异步 React 组件
+
+既然我们的组件使用了新的 APIs，它们将需要被异步初始化。我们使用 React Router 的一个扩展 [async-props](https://npmjs.com/package/async-props)。
+
+安装这个扩展： **npm install async-props**。
+
+重写我们的 components/authorsIndex.js、components/authorPage.js：
+
+````JavaScript
+//components/authorsIndex.js
+const React = require('react');
+const Link = require('react-router').Link;
+const xhrClient = require('../xhrClient');
+
+class AuthorsIndex extends React.Component {
+  static loadProps(context, cb) {
+    xhrClient.get('authors')
+      .then(response => {
+        const authors = response.data;
+        cb(null, {authors});
+      })
+      .catch(error => cb(error))
+    ;
+  }
+
+  render() {
+    return (
+      <div>
+        <h1>List of authors</h1>
+        <ul>{
+          this.props.authors.map(author =>
+            <li key={author.id}>
+              <Link to={`/author/${author.id}`}>{author.name}</Link>
+            </li>
+          )
+        }</ul>
+      </div>
+    )
+  }
+}
+module.exports = AuthorsIndex;
+
+
+//components/authorPage.js
+const React = require('react');
+const Link = require('react-router').Link;
+const xhrClient = require('../xhrClient');
+
+class AuthorPage extends React.Component {
+  static loadProps(context, cb) {
+    xhrClient.get(`authors/${context.params.id}`)
+      .then(response => {
+        const author = response.data;
+        cb(null, {author});
+      })
+      .catch(error => cb(error))
+    ;
+  }
+
+  render() {
+    return (
+      <div>
+        <h2>{this.props.author.name}s major works</h2>
+        <ul className="books">{
+          this.props.author.books.map( (book, key) =>
+            <li key={key} className="book">{book}</li>
+          )
+        }</ul>
+        <Link to="/">Go back to index</Link>
+      </div>
+    );
+  }
+}
+module.exports = AuthorPage;
+
+````
+
+正如你看到，我们导入一个新的 xhrClient 来请求数据并定义了一个 loadProps 的新方法。这个方法接收一个包含一些上下文参数和一个回掉函数。在这个函数内我们可以处理所有的异步操作。
+
+为了正确加载所有的异步组件，我们需要更新我们的客户端和服务端代码。
+
+````JavaScript
+//routes.js
+const React = require('react');
+const AsyncProps = require('async-props').default;
+const ReactRouter = require('react-router');
+const Router = ReactRouter.Router;
+const browserHistory = ReactRouter.browserHistory;
+const routesConfig = require('./routesConfig');
+
+class Routes extends React.Component {
+  render() {
+    return <Router
+      history={browserHistory}
+      routes={routesConfig}
+      render={(props) => <AsyncProps {...props}/>}
+    />;
+  }
+}
+module.exports = Routes;
+
+````
+
+#### web 服务器
+
+最后我们需要更新我们的 web 服务器，设置代理服务重定向 API 调用到真正的 API 服务并使用 async-props 模块。
+
+把 server.js 更名为 webServer.js：
+
+````JavaScript
+//webServer.js
+const http = require('http');
+const Express = require('express');
+const httpProxy = require('http-proxy');
+const React = require('react');
+const AsyncProps = require('async-props').default;
+const loadPropsOnServer = AsyncProps.loadPropsOnServer;
+const ReactDom = require('react-dom/server');
+const Router = require('react-router');
+const routesConfig = require('./src/routesConfig');
+
+const app = new Express();
+const server = new http.Server(app);
+
+const proxy = httpProxy.createProxyServer({
+  target: 'http://localhost:3001'
+});
+
+app.set('view engine', 'ejs');
+app.use('/dist', Express.static('dist'));
+app.use('/api', (req, res) => {
+  proxy.web(req, res, {target: targetUrl});
+});
+
+app.get('*', (req, res) => {
+  Router.match({routes: routesConfig, location: req.url}, (error,
+    redirectLocation, renderProps) => {
+    if (error) {
+      res.status(500).send(error.message)
+    } else if (redirectLocation) {
+      res.redirect(302, redirectLocation.pathname +
+        redirectLocation.search)
+    } else if (renderProps) {
+      loadPropsOnServer(renderProps, {}, (err, asyncProps, scriptTag) => {
+const markup = ReactDom.renderToString(<AsyncProps {...renderProps}
+          {...asyncProps} />);
+        res.render('index', {markup, scriptTag});
+      });
+    } else {
+      res.status(404).send('Not found')
+    }
+  });
+});
+
+server.listen(3000, (err) => {
+  if (err) {
+    return console.error(err);
+  }
+  console.info('WebServer running on http://localhost:3000');
+});
+
+````
+
+* 首先导入了 http-async 和 async-props。
+* 初始化 proxy 实例并通过中间件把它添加到我们的 web 服务中。
+* 我们改变了服务端渲染逻辑。这次我们不能直接调用 renderToString 函数，因为我们必须确认所有的异步数据被加载完成才行。async-props 模块提供了 loadPorpsOnServer 来处理。这个函数启动了所有必要的逻辑来从当前匹配的组件中导入数据。当导入结束，一个回掉函数被调用，然后我们再调用我们的 renderToString 方法。而且这次我们渲染了 AsyncProps 组件而不是 RouterContext，并传入各种同步和异步属性。另外我们还接收了一个叫 scriptTag 的参数。这个变量将包含一些 JavaScript 代码放置到 HTMl 中。这些码将包含服务器端渲染过程中加载的异步数据，以便浏览器能够直接访问此数据，并且不需要重复发出 API 请求。把这个脚本放置到 HTML 代码中，我们将其与从组件呈现过程中获取的标记一起传递给视图。
+
+我们的 views/index.ejs 模版：
+
+````HTML
+<!DOCTYPE html>
+<html>
+  <head>
+     <meta charset="utf-8"/>
+     <title>React Example - Authors archive</title>
+  </head>
+  <body>
+    <div id="main"><%- markup %></div>
+    <script src="/dist/bundle.js"></script>
+    <%- scriptTag %>
+  </body>
+</html>
+
+````
+
+我们添加了一个 scriptTag。现在我们启动这个服务：
+
+**babel-cli server.js**
+
+## 总结
+
+在本章节，我们探索了日新月异的通用 JavaScript 的世界。通用 JavaScript 为 web 开发领域开启了新的机会，但它依旧是一个新鲜不成熟的领域。
+
+在本章节，我们聚焦于介绍一些科目的基本概念，讨论了面向组件的用户界面、通用渲染、通用路由和通用数据检索。通过这些程序，我们通过一个非常简单的应用展示了如何把这些概念组合起来。
+
+尽管我们讨论了一大堆主题，我们仅仅接触了一些皮毛而已，如果你对这方面感兴趣你已经获取了基本的知识了，后面完全可以自己去探索了。
+
+在下一章，我们将强化我们对异步设计模式的知识并探索一些情景，例如异步模块的初始化和异步批处理、异步缓存。
