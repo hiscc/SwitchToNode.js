@@ -595,7 +595,7 @@ co(function* () {
 });
 ````
 
-最有意思的点是我们使用 try...catch 来处理块的内容。我们现在可以 throw 错误！我们 yield 的 download 函数， download 函数既不是 thunk 也不是 promise，它是另一个 generator。 co 让这变成可能，它也可以把其它 generator 变乘可 yield 的。
+最有意思的点是我们使用 try...catch 来处理块的内容。我们现在可以 throw 错误！我们 yield 的 download 函数，download 函数既不是 thunk 也不是 promise，它是另一个 generator。co 让这变成可能，它也可以把其它 generator 变成可 yield。
 
 最后我们转换 spiderLinks 函数，它遍历了页面内所有的下载项。
 
