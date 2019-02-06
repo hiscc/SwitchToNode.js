@@ -39,7 +39,7 @@ asyncOperation(arg)
   });
 ````
 
-我们至关重要的 then() 方法会同步返回另一个 promise。如果 fulfilled 或 rejected 会返回值，then() 方法将这样接收：
+我们至关重要的 then 方法会同步返回另一个 promise。如果 fulfilled 或 rejected 会返回值，then 方法将这样接收：
 
 * Fulfill with x if x is a value
 * Fulfill with the fulfillment value of x if x is a promise or a thenable
@@ -47,7 +47,7 @@ asyncOperation(arg)
 
 > A thenable is a promise-like object with a then() method. This term is used to indicate a promise that is foreign to the particular promise implementation in use.
 
-这个特性允许我们启动链式 promise 然后我们简单聚合整理异步操作。 当然如果我们不处理 onFulfilled() 或 onRejected()，promise 的结果值将自动传递到下一个链式 promise。这允许我们在整个 promise 链内传递错误，直到出现 onRejected() 处理程序：
+这个特性允许我们启动链式 promise 然后我们简单聚合整理异步操作。当然如果我们不处理 onFulfilled() 或 onRejected()，promise 的结果值将自动传递到下一个链式 promise。这允许我们在整个 promise 链内传递错误，直到出现 onRejected() 处理程序：
 
 ````JavaScript
 asyncOperation(arg)
@@ -129,7 +129,7 @@ module.exports.promisify = function(callbackBasedApi) {
 };
 ````
 
-处理函数返回另一个叫 promisified() 的函数， 它代表 promise 版本的 callbackBasedApi：
+处理函数返回另一个叫 promisified() 的函数，它代表 promise 版本的 callbackBasedApi：
 
 1. promisified() 函数使用 Promise 构建器创建一个新的 promise 并立即返回给它的调用者。
 1. 在 Promise 构建器内，传入 callbackBasedApi 回掉，我们简单把它加到参数列表 (args) 并提供给 promisified() 函数。

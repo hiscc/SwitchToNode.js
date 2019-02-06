@@ -45,3 +45,8 @@ Web 的神奇之处不必言说，可以说大部分软件界面都有 web 的�
 ## [异步高级诀窍](https://github.com/hiscc/SwitchToNode.js/blob/master/chapter-9/AdvancedAsynchronousRecipes.md)
 
 在本章，我们将提供一些流行的诀窍来解决特定的问题，这些问题在我们每天开发 Node.js 时都会遇到。
+
+
+## 其它
+
+* [配套源码](https://github.com/PacktPublishing/Node.js_Design_Patterns_Second_Edition_Code)
